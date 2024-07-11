@@ -165,13 +165,7 @@ class Task4CRNNEmbeddingsWrapper(nn.Module):
                  as_model,
                  pretrained_name=None,
                  audioset_classes=527,
-                 load_full_as_strong_model=False,
-                 audioset_strong_classes=456,
-                 as_strong_rnn_dim=1024,
-                 as_strong_rnn_layers=2,
-                 as_strong_skip_as_wrapper=False,
                  no_wrapper=False,
-                 no_wrapper_pretrained=False,
                  n_in_channel=1,
                  nclass=27,
                  activation="glu",
@@ -185,7 +179,6 @@ class Task4CRNNEmbeddingsWrapper(nn.Module):
                  embedding_size=768,
                  model_init_id=None,
                  model_init_mode="teacher",
-                 model_init_as_only=False,
                  kernel_size=[3, 3, 3, 3, 3, 3, 3],
                  padding=[1, 1, 1, 1, 1, 1, 1],
                  stride=[1, 1, 1, 1, 1, 1, 1],
@@ -234,20 +227,11 @@ class Task4CRNNEmbeddingsWrapper(nn.Module):
         self.softmax = nn.Softmax(dim=-1)
 
         if no_wrapper:
+            # use transformer directly, no wrapper
             self.as_model = as_model
             self.as_model_dim = embedding_size
-        elif no_wrapper_pretrained:
-            self.as_model = AudiosetWrapper(as_model, audioset_classes, embedding_size, use_attention_head=False,
-                                            pretrained_name=pretrained_name).model
-            self.as_model_dim = embedding_size
-        elif load_full_as_strong_model:
-            self.as_model = Task4RNNASStrongWrapper(as_model, audioset_classes, rnn_dim=as_strong_rnn_dim,
-                                                    rnn_layers=as_strong_rnn_layers, n_classes=audioset_strong_classes,
-                                                    load_wrapper_parameters=True, use_attention_head=False,
-                                                    skip_audiosetwrapper=as_strong_skip_as_wrapper,
-                                                    embed_dim=embedding_size, pretrained_name=pretrained_name)
-            self.as_model_dim = audioset_strong_classes
         else:
+            # load wrapper from audioset pre-training
             self.as_model = AudiosetWrapper(as_model, audioset_classes, embedding_size, use_attention_head=False,
                                             pretrained_name=pretrained_name)
             self.as_model_dim = audioset_classes
@@ -294,6 +278,7 @@ class Task4CRNNEmbeddingsWrapper(nn.Module):
             param.detach_()
 
         if model_init_id:
+            # for loading the full model including the wrapper (e.g., load S1 model for S2)
             ckpt = os.path.join(PRETRAINED_S1, model_init_id + ".ckpt")
             if model_init_mode == "teacher":
                 print("Loaded teacher from ckpt: ", ckpt)
@@ -301,12 +286,7 @@ class Task4CRNNEmbeddingsWrapper(nn.Module):
             else:
                 print("Loaded student from ckpt: ", ckpt)
                 state_dict = torch.load(ckpt, map_location="cpu")["student"]
-            if model_init_as_only:
-                state_dict = {k: state_dict[k] for k in state_dict if k.startswith("as_model")}
-                strict = False
-            else:
-                strict = True
-            self.load_state_dict(state_dict, strict=strict)
+            self.load_state_dict(state_dict, strict=True)
 
         self.first = True
 
@@ -340,10 +320,6 @@ class Task4CRNNEmbeddingsWrapper(nn.Module):
         else:
             raise ValueError("No such embed pooling type: ", self.embed_pool)
 
-        if self.ablate_embedding:
-            embeddings = torch.zeros_like(embeddings).to(embeddings.device)
-        if self.ablate_cnn:
-            x = torch.zeros_like(x).to(x.device)
         if self.first:
             print("Embedding model pooled:", embeddings.size())
         self.first = False
@@ -360,19 +336,6 @@ class Task4CRNNEmbeddingsWrapper(nn.Module):
 
         x = self.rnn(x)
         x = self.dropout(x)
-
-        if return_strong_weak_logits:
-            strong_logits = self.dense(x)
-            with autocast(enabled=False, device_type='cuda'):
-                x = x.float()
-                strong_probs, weak_probs = self._get_logits(x, pad_mask, classes_mask)
-                # invert sigmoid for weak probs
-                def inverse_sigmoid(y):
-                    # Ensure the input is within the valid range for the inverse sigmoid
-                    y = torch.clamp(y, min=1e-8, max=1 - 1e-8)
-                    return torch.log(y / (1 - y))
-                weak_logits = inverse_sigmoid(weak_probs)
-            return strong_logits, weak_logits
 
         if return_strong_logits:
             return self.dense(x)

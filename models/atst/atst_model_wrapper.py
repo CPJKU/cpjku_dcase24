@@ -3,11 +3,10 @@ import torch
 from models.atst.audio_transformer import FrameASTModel
 
 from torchaudio.transforms import AmplitudeToDB, MelSpectrogram
-from models.atst.frequency_warping import RandomResizeCrop
 
 
 class ATSTMel(torch.nn.Module):
-    def __init__(self, freq_scale=1.0) -> None:
+    def __init__(self) -> None:
         super().__init__()
         self.mel_transform = MelSpectrogram(
             16000,
@@ -20,10 +19,6 @@ class ATSTMel(torch.nn.Module):
         )
         self.amp_to_db = AmplitudeToDB(stype="power", top_db=80)
         self.scaler = MinMax(min=-79.6482, max=50.6842)
-        if freq_scale == 1.0:
-            self.rrc = torch.nn.Identity()
-        else:
-            self.rrc = RandomResizeCrop(freq_scale=(freq_scale, 1.0))
 
     def amp2db(self, spec):
         return self.amp_to_db(spec).clamp(min=-50, max=80)
@@ -32,8 +27,6 @@ class ATSTMel(torch.nn.Module):
         with torch.autocast(device_type="cuda", enabled=False):
             spec = self.mel_transform(audio)
         spec = self.scaler(self.amp2db(spec))
-        if self.training:
-            self.rrc(spec)
         spec = spec.unsqueeze(1)
         return spec
 

@@ -199,11 +199,7 @@ def default_conf():
     t4_wrapper = dict(
         name="Task4CRNNEmbeddingsWrapper",
         audioset_classes=527,
-        load_full_as_strong_model=False,
-        audioset_strong_classes=456,
-        as_strong_rnn_dim=1024,
-        as_strong_rnn_layers=2,
-        as_strong_skip_as_wrapper=False,
+        no_wrapper=False,
         n_in_channel=1,
         nclass=27,
         activation="cg",

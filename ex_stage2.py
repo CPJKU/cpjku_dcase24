@@ -193,12 +193,13 @@ def default_conf():
     )
 
     atst_frame = dict(
-        wandb_id="u1bk5ce7"
+        pretrained_name="atst_as_strong"
     )
 
     t4_wrapper = dict(
         name="Task4CRNNEmbeddingsWrapper",
         audioset_classes=527,
+        no_wrapper=False,
         dropout=0.5,
         n_layers_RNN=2,
         n_in_channel=1,
@@ -364,7 +365,7 @@ def default_conf():
     exclude_maestro_weak_ssl = False
     use_ict_loss = True
 
-    atst_checkpoint = "atstframe_base_as2M.ckpt"
+    atst_checkpoint = "atst_base.ckpt"
 
 
 add_configs(ex)  # add common configurations
@@ -681,7 +682,7 @@ class T4Module(L.LightningModule):
         if self.config.t4_wrapper.name == "Task4CRNNEmbeddingsWrapper":
             self.student = Task4CRNNEmbeddingsWrapper(transformer, audioset_classes=527,
                                                       embedding_size=embed_dim, nclass=27,
-                                                      pretrained_name=self.config[arch]["wandb_id"],
+                                                      pretrained_name=self.config[arch]["pretrained_name"],
                                                       model_init_mode="student")
         else:
             raise ValueError(f"Unknown head={self.config.head}")
@@ -693,7 +694,7 @@ class T4Module(L.LightningModule):
         if self.config.t4_wrapper.name == "Task4CRNNEmbeddingsWrapper":
             self.teacher = Task4CRNNEmbeddingsWrapper(transformer, audioset_classes=527,
                                                       embedding_size=embed_dim, nclass=27,
-                                                      pretrained_name=self.config[arch]["wandb_id"])
+                                                      pretrained_name=self.config[arch]["pretrained_name"])
         else:
             raise ValueError(f"Unknown head={self.config.head}")
         self.encoder = scall(many_hot_encoder)

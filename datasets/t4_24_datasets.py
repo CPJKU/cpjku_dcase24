@@ -15,6 +15,7 @@ from copy import deepcopy
 
 from datasets.samplers import ConcatDatasetBatchSampler
 from datasets.classes_dict import classes_labels_desed, classes_labels_maestro_real, maestro_desed_alias, desed_maestro_alias
+from configs import DIRS_PATH
 
 
 def get_training_dataset(
@@ -952,14 +953,8 @@ class DIRDataset(Dataset):
         return self.dataset[index]
 
     def load_dirs(self, sample_rate):
-        dirs_path = "dirs"
-        all_paths = [path for path in pathlib.Path(os.path.expanduser(dirs_path)).rglob('*.wav')]
+        all_paths = [path for path in pathlib.Path(os.path.expanduser(DIRS_PATH)).rglob('*.wav')]
         all_paths = sorted(all_paths)
-        all_paths_name = [str(p).rsplit("/", 1)[-1] for p in all_paths]
-
-        print("Augment waveforms with the following device impulse responses:")
-        for i in range(len(all_paths_name)):
-            print(i, ": ", all_paths_name[i])
 
         def process_func(dir_file):
             sig, orig_fs = torchaudio.load(dir_file)

@@ -108,7 +108,7 @@ Alternatively, you can just download the files you need and want to work with.
 ## Example Command: Stage 1 Training w. ATST
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 python -m ex_stage1 with arch=atst_frame loss_weights="(0.5, 0.25, 0.12, 0.1, 0.1, 1.5)" trainer.max_epochs=200 optimizer.crnn_lr=0.0005 filter_augment.apply=0 training.pseudo_labels_name=final mix_augment.apply_mixstyle=0 ssl_no_class_mask=1 wandb.name=s1.i1,atst
+CUDA_VISIBLE_DEVICES=0 python -m ex_stage1 with arch=atst_frame loss_weights="(0.5, 0.25, 0.12, 0.1, 0.1, 1.5)" trainer.max_epochs=200 optimizer.crnn_lr=0.0005 filter_augment.apply=0 mix_augment.apply_mixstyle=0 ssl_no_class_mask=1 wandb.name=s1.i1,atst
 ```
 
 
@@ -116,5 +116,5 @@ CUDA_VISIBLE_DEVICES=0 python -m ex_stage1 with arch=atst_frame loss_weights="(0
 ## Example Command: Stage 2 Training w. ATST
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 python -m ex_stage2 with arch=atst_frame trainer.accumulate_grad_batches=8 loss_weights="(12, 3, 0.25, 1, 60, 0)" t4_wrapper.model_init_id=6mwmg1e0 optimizer.pt_lr_scale=0.5 optimizer.cnn_lr=1e-5 optimizer.rnn_lr=1e-4 freq_warp.include_maestro=1 optimizer.adamw=1 optimizer.weight_decay=1e-3 wandb.name=s2.i1,atst
+CUDA_VISIBLE_DEVICES=0 python -m ex_stage2 with arch=atst_frame trainer.accumulate_grad_batches=8 loss_weights="(12, 3, 0.25, 1, 60, 0)" t4_wrapper.model_init_id=atst_stage1 optimizer.pt_lr_scale=0.5 optimizer.cnn_lr=1e-5 optimizer.rnn_lr=1e-4 freq_warp.include_maestro=1 optimizer.adamw=1 optimizer.weight_decay=1e-3 wandb.name=s2.i1,atst
 ```
