@@ -32,7 +32,7 @@ from helpers.encoder import get_encoder
 # data & augmentations
 from datasets import t4_24_datasets
 from helpers.workersinit import worker_init_fn
-from helpers.augment import mixup, frame_shift, gain_augment, time_mask, feature_transformation, mixstyle
+from helpers.augment import mixup, frame_shift, gain_augment, time_mask, feature_transformation, mixstyle, RandomResizeCrop
 from datasets.classes_dict import classes_labels_desed, classes_labels_maestro_real, \
     classes_labels_maestro_real_eval
 
@@ -88,7 +88,7 @@ get_test_dataset = ex.command(
 )
 
 get_sampler = ex.command(
-    t4_24_datasets.get_sampler, prefix="training", batch_sizes=(12, 10, 10, 20, 20)
+    t4_24_datasets.get_sampler, prefix="training", batch_sizes=(7, 5, 5, 9, 9)
 )
 
 # Define loaders
@@ -146,7 +146,7 @@ def default_conf():
     audio_len = 10
     sample_rate = 16_000
     trainer = dict(
-        max_epochs=200,
+        max_epochs=250,
         devices=1,
         weights_summary="full",
         benchmark=True,
@@ -159,16 +159,16 @@ def default_conf():
     )
 
     optimizer = dict(
-        lr=0.001,
-        crnn_lr=0.001,
-        pt_lr=0.0,
+        cnn_lr=0.0001,
+        rnn_lr=0.001,
+        pt_lr=0.0001,
         pt_lr_scale=1.0,
-        pt_trainable_layers=0,  # 0, since transformer model is freezed in stage 1
-        adamw=True,
-        weight_decay=1e-2,
+        pt_trainable_layers="all",
+        adamw=False,
+        weight_decay=1e-4,
         betas=(0.9, 0.999),
         schedule_mode="cos",
-        num_warmup_steps=4000
+        num_warmup_steps=270
     )
 
     mel = dict(
@@ -193,39 +193,37 @@ def default_conf():
     )
 
     atst_frame = dict(
-        pretrained_name="atst_as_strong"
+        wandb_id="u1bk5ce7"
     )
 
     t4_wrapper = dict(
         name="Task4CRNNEmbeddingsWrapper",
         audioset_classes=527,
-        load_full_as_strong_model=False,
-        audioset_strong_classes=456,
-        as_strong_rnn_dim=1024,
-        as_strong_rnn_layers=2,
-        as_strong_skip_as_wrapper=False,
+        dropout=0.5,
+        n_layers_RNN=2,
         n_in_channel=1,
         nclass=27,
-        activation="cg",
-        dropout=0.3,
         attention=True,
         n_RNN_cell=256,
-        n_layers_RNN=2,
-        dropout_recurrent=0,
-        embedding_size=768,
-        model_init_id=None,
-        model_init_mode="student",
+        activation="cg",
+        rnn_type="BGRU",
         kernel_size=[3, 3, 3, 3, 3, 3, 3],
         padding=[1, 1, 1, 1, 1, 1, 1],
         stride=[1, 1, 1, 1, 1, 1, 1],
         nb_filters=[16, 32, 64, 128, 128, 128, 128],
-        pooling=[[2, 2], [2, 2], [1, 2], [1, 2], [1, 2], [1, 2], [1, 2]]
+        pooling=[[2, 2], [2, 2], [1, 2], [1, 2], [1, 2], [1, 2], [1, 2]],
+        dropout_recurrent=0,
+        use_embeddings=True,
+        embedding_size=768,
+        embedding_type="frame",
+        aggregation_type="pool1d",
+        model_init_id=None
     )
 
     training = dict(sample_rate=sample_rate,
                     include_external_strong=True,
                     exclude_overlapping=True,
-                    dir_p=0.0,
+                    dir_p=0.5,
                     dir_desed_strong=True,
                     dir_weak=True,
                     dir_unlabeled=True,
@@ -238,10 +236,10 @@ def default_conf():
     validation = dict(sample_rate=sample_rate)
     test = dict(sample_rate=sample_rate)
 
-    # maestro, strong real, strong synth, weak, unlabeled (ssl loss), pseudo strong loss
+    # maestro, strong real, strong synth, weak, unlabeled (ssl loss), pseudo strong loss (set to 0 in stage 2)
     # these loss weights are the results of a (painful) tuning process; they might be far from optimal
-    loss_weights = (0.08, 0.05, 0.08, 0.21, 0.58, 0.0)
-    ssl_scale_max = 2.0
+    loss_weights = (2, 1, 1, 1, 70, 0)
+    ssl_scale_max = 1.0
     ema_factor = 0.999
     val_thresholds = [0.5]
 
@@ -303,8 +301,14 @@ def default_conf():
         filter_minimum_bandwidth=6
     )
 
+    freq_warp = dict(
+        apply=1,
+        p=0.5,
+        include_maestro=False
+    )
+
     time_augment = dict(
-        apply_mask=False,
+        apply_mask=True,
         apply_shift=False,
         mask_target="desed_strong",  # options: "desed strong", "strong", "all"
         shift_range=0.075,
@@ -354,13 +358,13 @@ def default_conf():
 
     # different settings regarding ssl and pseudo loss;
     # interestingly, there is no drastic effect in varying these
+    ssl_loss_warmup_steps = 270
     ssl_no_class_mask = False
-    pseudo_strong_no_class_mask = False
-    exclude_maestro_weak_ssl = False
-    ssl_loss_warmup_steps = 14_000
     include_maestro_ssl = True
+    exclude_maestro_weak_ssl = False
+    use_ict_loss = True
 
-    atst_checkpoint = "atst_base.ckpt"
+    atst_checkpoint = "atstframe_base_as2M.ckpt"
 
 
 add_configs(ex)  # add common configurations
@@ -388,7 +392,7 @@ def get_lr_scheduler(
         num_training_steps,
         schedule_mode="cos",
         gamma: float = 0.999996,
-        num_warmup_steps=4000,
+        num_warmup_steps=270,
         lr_end=1e-7,
 ):
     if schedule_mode in {"exp"}:
@@ -426,30 +430,175 @@ def get_scaler(statistic="instance", normtype="minmax", dims=(2, 3)):
 
 
 def separate_params(model, arch):
-    crnn_params = []
+    cnn_params = []
+    rnn_params = []
+    if arch == "frame_dymn":
+        pt_params = [[], [], [], [], [], [], []]
+    elif arch == "passt":
+        pt_params = [[], [], [], [], [], [], [], [], [], [], [], [], [], []]
+    elif arch == "atst_frame":
+        pt_params = [[], [], [], [], [], [], [], [], [], [], [], [], [], []]
+    elif arch == "beats":
+        pt_params = [[], [], [], [], [], [], [], [], [], [], [], [], [], []]
+    else:
+        raise ValueError("Unknown arch: ", arch)
 
     for k, p in model.named_parameters():
         if not 'as_model' in k or "as_model.head_linear_layer" in k:
-            # collect crnn parameters
-            crnn_params.append(p)
+            # it is either rnn or cnn
+            if 'cnn' in k:
+                cnn_params.append(p)
+            else:
+                rnn_params.append(p)
+        elif arch == "frame_dymn":
+            if 'in_c' in k:
+                pt_params[0].append(p)
+            elif 'out_c' in k or 'head' in k:
+                pt_params[-1].append(p)
+            elif 'layers.0' in k or 'layers.1' in k or 'layers.2' in k:
+                pt_params[1].append(p)
+            elif 'layers.3' in k or 'layers.4' in k or 'layers.5' in k:
+                pt_params[2].append(p)
+            elif 'layers.6' in k or 'layers.7' in k or 'layers.8' in k:
+                pt_params[3].append(p)
+            elif 'layers.9' in k or 'layers.10' in k or 'layers.11' in k:
+                pt_params[4].append(p)
+            elif 'layers.12' in k or 'layers.13' in k or 'layers.14' in k:
+                pt_params[5].append(p)
+            else:
+                ValueError("Check layer-wise learning for frame-dymn!")
+        elif arch == "passt":
+            if 'conv_in' in k or 'pos_embed' in k or 'token' in k or 'patch_embed' in k:
+                pt_params[0].append(p)
+            elif 'blocks.0' in k:
+                pt_params[1].append(p)
+            elif 'blocks.1' in k:
+                pt_params[2].append(p)
+            elif 'blocks.2' in k:
+                pt_params[3].append(p)
+            elif 'blocks.3' in k:
+                pt_params[4].append(p)
+            elif 'blocks.4' in k:
+                pt_params[5].append(p)
+            elif 'blocks.5' in k:
+                pt_params[6].append(p)
+            elif 'blocks.6' in k:
+                pt_params[7].append(p)
+            elif 'blocks.7' in k:
+                pt_params[8].append(p)
+            elif 'blocks.8' in k:
+                pt_params[9].append(p)
+            elif 'blocks.9' in k:
+                pt_params[10].append(p)
+            elif 'blocks.10' in k:
+                pt_params[11].append(p)
+            elif 'blocks.11' in k:
+                pt_params[12].append(p)
+            elif 'model.norm' in k or 'head_linear' in k or 'rnn' in k or 'sigmoid' in k:
+                pt_params[13].append(p)
+            else:
+                ValueError("Check layer-wise learning for frame-passt!")
+        elif arch == "atst_frame":
+            if "blocks.0." in k:
+                pt_params[1].append(p)
+            elif "blocks.1." in k:
+                pt_params[2].append(p)
+            elif "blocks.2." in k:
+                pt_params[3].append(p)
+            elif "blocks.3." in k:
+                pt_params[4].append(p)
+            elif "blocks.4." in k:
+                pt_params[5].append(p)
+            elif "blocks.5." in k:
+                pt_params[6].append(p)
+            elif "blocks.6." in k:
+                pt_params[7].append(p)
+            elif "blocks.7." in k:
+                pt_params[8].append(p)
+            elif "blocks.8" in k:
+                pt_params[9].append(p)
+            elif "blocks.9." in k:
+                pt_params[10].append(p)
+            elif "blocks.10." in k:
+                pt_params[11].append(p)
+            elif "blocks.11." in k:
+                pt_params[12].append(p)
+            elif ".norm_frame." in k or ".rnn." in k or 'head_linear' in k or 'sigmoid_dense' in k:
+                pt_params[13].append(p)
+            else:
+                pt_params[0].append(p)
+        elif arch == "beats":
+            if ".layers.0." in k:
+                pt_params[1].append(p)
+            elif ".layers.1." in k:
+                pt_params[2].append(p)
+            elif ".layers.2." in k:
+                pt_params[3].append(p)
+            elif ".layers.3." in k:
+                pt_params[4].append(p)
+            elif ".layers.4." in k:
+                pt_params[5].append(p)
+            elif ".layers.5." in k:
+                pt_params[6].append(p)
+            elif ".layers.6." in k:
+                pt_params[7].append(p)
+            elif ".layers.7." in k:
+                pt_params[8].append(p)
+            elif ".layers.8." in k:
+                pt_params[9].append(p)
+            elif ".layers.9." in k:
+                pt_params[10].append(p)
+            elif ".layers.10." in k:
+                pt_params[11].append(p)
+            elif ".layers.11." in k:
+                pt_params[12].append(p)
+            elif ".norm_frame." in k or ".rnn." in k or 'head_linear' in k or 'sigmoid_dense' in k:
+                pt_params[13].append(p)
+            else:
+                pt_params[0].append(p)
+        else:
+            ValueError("Check layer-wise learning implementation!")
 
-    return crnn_params
+    return cnn_params, rnn_params, list(reversed(pt_params))
 
 
 @ex.command(prefix="optimizer")
 def get_optimizer(
-        model, arch, crnn_lr=0.001, adamw=True, weight_decay=1e-2, betas=[0.9, 0.999],
+        model, arch, cnn_lr=0.0001, rnn_lr=0.001, pt_lr=0.0001, pt_lr_scale=1.0, pt_trainable_layers="all",
+        adamw=False, weight_decay=1e-4, betas=[0.9, 0.999]
 ):
-    crnn_params = separate_params(model, arch)
+    cnn_params, rnn_params, pt_params = separate_params(model, arch)
 
-    crnn_param_groups = [
-        {"params": crnn_params, "lr": crnn_lr}
+    cnn_param_groups = [
+        {"params": cnn_params, "lr": cnn_lr}
     ]
+
+    rnn_param_groups = [
+        {"params": rnn_params, "lr": rnn_lr}
+    ]
+
+    pt_trainable_params = []
+    if pt_trainable_layers == "all":
+        trainable_layers = len(pt_params)
+    else:
+        trainable_layers = pt_trainable_layers
+    for i in range(trainable_layers):
+        pt_trainable_params.append(pt_params[i])
+        for p in pt_params[i]:
+            p.requires_grad = True
+
+    init_lr = pt_lr
+    lr_scale = pt_lr_scale
+    scale_lrs = [init_lr * (lr_scale ** i) for i in range(trainable_layers)]
+    pt_param_groups = [{"params": pt_trainable_params[i], "lr": scale_lrs[i]} for i in
+                       range(len(pt_trainable_params))]
+
+    param_groups = cnn_param_groups + rnn_param_groups + pt_param_groups
 
     if adamw:
         print(f"\nUsing adamw weight_decay={weight_decay}!\n")
-        return torch.optim.AdamW(crnn_param_groups, weight_decay=weight_decay, betas=betas)
-    return torch.optim.Adam(crnn_param_groups, betas=betas)
+        return torch.optim.AdamW(param_groups, weight_decay=weight_decay, betas=betas)
+    return torch.optim.Adam(param_groups, betas=betas)
 
 
 class T4Module(L.LightningModule):
@@ -475,6 +624,9 @@ class T4Module(L.LightningModule):
         self.gain_target = self.config.gain_target if "gain_target" in self.config else "all"
 
         self.median_filter = ClassWiseMedianFilter(self.config.median_window)
+
+        self.freq_warp = RandomResizeCrop((1, 1.0), time_scale=(1.0, 1.0))
+        self.fwarp_config = self.config.freq_warp
 
         # for weak labels we simply compute f1 score
         self.get_weak_student_f1_seg_macro = torchmetrics.classification.f_beta.MultilabelF1Score(
@@ -529,7 +681,7 @@ class T4Module(L.LightningModule):
         if self.config.t4_wrapper.name == "Task4CRNNEmbeddingsWrapper":
             self.student = Task4CRNNEmbeddingsWrapper(transformer, audioset_classes=527,
                                                       embedding_size=embed_dim, nclass=27,
-                                                      pretrained_name=self.config[arch]["pretrained_name"],
+                                                      pretrained_name=self.config[arch]["wandb_id"],
                                                       model_init_mode="student")
         else:
             raise ValueError(f"Unknown head={self.config.head}")
@@ -541,7 +693,7 @@ class T4Module(L.LightningModule):
         if self.config.t4_wrapper.name == "Task4CRNNEmbeddingsWrapper":
             self.teacher = Task4CRNNEmbeddingsWrapper(transformer, audioset_classes=527,
                                                       embedding_size=embed_dim, nclass=27,
-                                                      pretrained_name=self.config[arch]["pretrained_name"])
+                                                      pretrained_name=self.config[arch]["wandb_id"])
         else:
             raise ValueError(f"Unknown head={self.config.head}")
         self.encoder = scall(many_hot_encoder)
@@ -584,7 +736,7 @@ class T4Module(L.LightningModule):
         log_path = os.path.join(self.loggers[0].name, self.loggers[0].experiment.id)
         os.makedirs(os.path.join(log_path, "codecarbon"), exist_ok=True)
         self.tracker_train = OfflineEmissionsTracker(
-            "DCASE Task 4 Stage 1",
+            "DCASE Task 4 Stage 2",
             output_dir=os.path.join(log_path, "codecarbon"),
             output_file="emissions_stage1.csv",
             log_level="warning",
@@ -597,7 +749,7 @@ class T4Module(L.LightningModule):
         log_path = os.path.join(self.loggers[0].name, self.loggers[0].experiment.id)
         os.makedirs(os.path.join(log_path, "codecarbon"), exist_ok=True)
         self.tracker_devtest = OfflineEmissionsTracker(
-            "DCASE Task 4 Stage 1, Test",
+            "DCASE Task 4 Stage 2, Test",
             output_dir=os.path.join(log_path, "codecarbon"),
             output_file="emissions_stage1_test.csv",
             log_level="warning",
@@ -693,10 +845,6 @@ class T4Module(L.LightningModule):
             else:
                 raise ValueError(f"Unknown gain target: {self.gain_target}")
 
-        # set transformer mel in eval mode, as transformer is frozen in this stage
-        if hasattr(self.transformer_mel, 'eval') and callable(getattr(self.transformer_mel, 'eval')):
-            self.transformer_mel.eval()
-
         with autocast(enabled=False, device_type='cuda'):
             audio = audio.float()
             sed_feats = self.crnn_mel(audio).unsqueeze(1)
@@ -729,74 +877,6 @@ class T4Module(L.LightningModule):
             else:
                 raise ValueError(f"Unknown shift target: {self.ta_config.shift_target}")
 
-        if self.mix_config.apply_mixup and self.mix_config.mixup_p > random.random():
-            if self.mix_config.mixup_weak:
-                sed_feats[weak_mask], pt_feats[weak_mask], labels_weak, pseudo_strong[weak_mask] = mixup(
-                    sed_feats[weak_mask], embeddings=pt_feats[weak_mask], targets=labels_weak,
-                    pseudo_strong=pseudo_strong[weak_mask],
-                    mixup_label_type="soft", max_coef=self.mix_config.mixup_max_coef
-                )
-
-            if self.mix_config.mixup_desed_maestro and self.mix_config.mixup_desed_strong \
-                    and self.mix_config.mixup_maestro:
-                # cross-mix DESED and MAESTRO data
-                sed_feats[all_strong_mask], pt_feats[all_strong_mask], labels[all_strong_mask],\
-                valid_class_mask[all_strong_mask], pseudo_strong[all_strong_mask] = mixup(
-                    sed_feats[all_strong_mask], embeddings=pt_feats[all_strong_mask],
-                    valid_class_mask=valid_class_mask[all_strong_mask],
-                    targets=labels[all_strong_mask], pseudo_strong=pseudo_strong[all_strong_mask], mixup_label_type="soft",
-                    max_coef=self.mix_config.mixup_max_coef
-                )
-            else:
-                if self.mix_config.mixup_desed_strong:
-                    sed_feats[desed_strong_mask], pt_feats[desed_strong_mask], labels[desed_strong_mask], \
-                    pseudo_strong[desed_strong_mask] = mixup(
-                        sed_feats[desed_strong_mask], embeddings=pt_feats[desed_strong_mask],
-                        targets=labels[desed_strong_mask], pseudo_strong=pseudo_strong[desed_strong_mask],
-                        mixup_label_type="soft",
-                        max_coef=self.mix_config.mixup_max_coef
-                    )
-
-                if self.mix_config.mixup_maestro:
-                    sed_feats[maestro_mask], pt_feats[maestro_mask], labels[maestro_mask], \
-                    pseudo_strong[maestro_mask] = mixup(
-                        sed_feats[maestro_mask], embeddings=pt_feats[maestro_mask],
-                        targets=labels[maestro_mask], pseudo_strong=pseudo_strong[maestro_mask], mixup_label_type="soft",
-                        max_coef=self.mix_config.mixup_max_coef
-                    )
-
-            if self.mix_config.mixup_unlabeled:
-                sed_feats[unlabeled_mask], pt_feats[unlabeled_mask], labels[unlabeled_mask], pseudo_strong[unlabeled_mask],\
-                    = mixup(
-                    sed_feats[unlabeled_mask], embeddings=pt_feats[unlabeled_mask],
-                    targets=labels[unlabeled_mask], pseudo_strong=pseudo_strong[unlabeled_mask], mixup_label_type="soft",
-                    max_coef=self.mix_config.mixup_max_coef
-                )
-
-        if self.mix_config.apply_mixstyle and self.mix_config.mixstyle_p > random.random():
-            if self.mix_config.mixstyle_weak:
-                sed_feats[weak_mask] = mixstyle(sed_feats[weak_mask], self.mix_config.mixstyle_alpha)
-                pt_feats[weak_mask] = mixstyle(pt_feats[weak_mask], self.mix_config.mixstyle_alpha)
-
-            if self.mix_config.mixstyle_desed_maestro and self.mix_config.mixstyle_desed_strong and \
-                    self.mix_config.mixstyle_maestro:
-                # mix DESED and MAESTRO data
-                sed_feats[all_strong_mask] = mixstyle(sed_feats[all_strong_mask], self.mix_config.mixstyle_alpha)
-                pt_feats[all_strong_mask] = mixstyle(pt_feats[all_strong_mask], self.mix_config.mixstyle_alpha)
-            else:
-                if self.mix_config.mixstyle_desed_strong:
-                    sed_feats[desed_strong_mask] = mixstyle(sed_feats[desed_strong_mask],
-                                                            self.mix_config.mixstyle_alpha)
-                    pt_feats[desed_strong_mask] = mixstyle(pt_feats[desed_strong_mask], self.mix_config.mixstyle_alpha)
-
-                if self.mix_config.mixstyle_maestro:
-                    sed_feats[maestro_mask] = mixstyle(sed_feats[maestro_mask], self.mix_config.mixstyle_alpha)
-                    pt_feats[maestro_mask] = mixstyle(pt_feats[maestro_mask], self.mix_config.mixstyle_alpha)
-
-            if self.mix_config.mixstyle_unlabeled:
-                sed_feats[unlabeled_mask] = mixstyle(sed_feats[unlabeled_mask], self.mix_config.mixstyle_alpha)
-                pt_feats[unlabeled_mask] = mixstyle(pt_feats[unlabeled_mask], self.mix_config.mixstyle_alpha)
-
         if self.ta_config.apply_mask:
             if self.ta_config.mask_target == "desed_strong":
                 sed_feats[desed_strong_mask], pt_feats[desed_strong_mask], labels[desed_strong_mask], pseudo_strong[desed_strong_mask] = \
@@ -822,14 +902,105 @@ class T4Module(L.LightningModule):
             else:
                 raise ValueError(f"Unknown value for 'mask_target': {self.ta_config.mask_target}")
 
-        if self.fa_config.apply and self.fa_config.p > random.random():
-            # only augment CNN input, as the transformer is not trained in this stage
-            features_stud, features_teach = feature_transformation(sed_feats, self.fa_config.n_transform,
-                                                                   self.fa_config.filter_db_range,
-                                                                   self.fa_config.filter_bands,
-                                                                   self.fa_config.filter_minimum_bandwidth)
+        sed_feats_org = sed_feats.clone()
+        pt_feats_org = pt_feats.clone()
+
+        if self.mix_config.apply_mixup and self.mix_config.mixup_p > random.random():
+            if self.mix_config.mixup_weak:
+                sed_feats[weak_mask], pt_feats[weak_mask], labels_weak, pseudo_strong[
+                    weak_mask], perm_weak, c_weak = mixup(
+                    sed_feats[weak_mask], embeddings=pt_feats[weak_mask], targets=labels_weak, mixup_label_type="soft",
+                    pseudo_strong=pseudo_strong[weak_mask],
+                    return_mix_coef=True, max_coef=self.mix_config.mixup_max_coef
+                )
+
+            if self.mix_config.mixup_desed_maestro and self.mix_config.mixup_desed_strong \
+                    and self.mix_config.mixup_maestro:
+                sed_feats[all_strong_mask], pt_feats[all_strong_mask], labels[
+                    all_strong_mask], valid_class_mask[all_strong_mask], pseudo_strong[
+                    all_strong_mask], perm_strong, c_strong = mixup(
+                    sed_feats[all_strong_mask], embeddings=pt_feats[all_strong_mask],
+                    valid_class_mask=valid_class_mask[all_strong_mask],
+                    targets=labels[all_strong_mask], pseudo_strong=pseudo_strong[all_strong_mask],
+                    mixup_label_type="soft",
+                    return_mix_coef=True, max_coef=self.mix_config.mixup_max_coef
+                )
+
+                perm_maestro = None
+            else:
+                if self.mix_config.mixup_desed_strong:
+                    sed_feats[desed_strong_mask], pt_feats[desed_strong_mask], labels[desed_strong_mask], pseudo_strong[
+                        desed_strong_mask], \
+                    perm_strong, c_strong = mixup(
+                        sed_feats[desed_strong_mask], embeddings=pt_feats[desed_strong_mask],
+                        targets=labels[desed_strong_mask], pseudo_strong=pseudo_strong[desed_strong_mask],
+                        mixup_label_type="soft",
+                        return_mix_coef=True, max_coef=self.mix_config.mixup_max_coef
+                    )
+
+                if self.mix_config.mixup_maestro:
+                    sed_feats[maestro_mask], pt_feats[maestro_mask], labels[maestro_mask], pseudo_strong[
+                        maestro_mask], perm_maestro, c_maestro = mixup(
+                        sed_feats[maestro_mask], embeddings=pt_feats[maestro_mask],
+                        targets=labels[maestro_mask], pseudo_strong=pseudo_strong[maestro_mask],
+                        mixup_label_type="soft",
+                        return_mix_coef=True, max_coef=self.mix_config.mixup_max_coef
+                    )
+
+            if self.mix_config.mixup_unlabeled:
+                sed_feats[unlabeled_mask], pt_feats[unlabeled_mask], labels[unlabeled_mask], pseudo_strong[
+                    unlabeled_mask], \
+                perm_unlabeled, c_unlabeled = mixup(
+                    sed_feats[unlabeled_mask], embeddings=pt_feats[unlabeled_mask],
+                    targets=labels[unlabeled_mask], pseudo_strong=pseudo_strong[unlabeled_mask],
+                    mixup_label_type="soft",
+                    return_mix_coef=True, max_coef=self.mix_config.mixup_max_coef
+                )
         else:
-            features_stud, features_teach = sed_feats, sed_feats
+            perm_weak = None
+
+        if self.mix_config.apply_mixstyle and self.mix_config.mixstyle_p > random.random():
+            if self.mix_config.mixstyle_weak:
+                sed_feats[weak_mask] = mixstyle(sed_feats[weak_mask], self.mix_config.mixstyle_alpha)
+                pt_feats[weak_mask] = mixstyle(pt_feats[weak_mask], self.mix_config.mixstyle_alpha)
+
+            if self.mix_config.mixstyle_desed_maestro and self.mix_config.mixstyle_desed_strong and \
+                    self.mix_config.mixstyle_maestro:
+                sed_feats[all_strong_mask] = mixstyle(sed_feats[all_strong_mask], self.mix_config.mixstyle_alpha)
+                pt_feats[all_strong_mask] = mixstyle(pt_feats[all_strong_mask], self.mix_config.mixstyle_alpha)
+            else:
+                if self.mix_config.mixstyle_desed_strong:
+                    sed_feats[desed_strong_mask] = mixstyle(sed_feats[desed_strong_mask],
+                                                            self.mix_config.mixstyle_alpha)
+                    pt_feats[desed_strong_mask] = mixstyle(pt_feats[desed_strong_mask], self.mix_config.mixstyle_alpha)
+
+                if self.mix_config.mixstyle_maestro:
+                    sed_feats[maestro_mask] = mixstyle(sed_feats[maestro_mask], self.mix_config.mixstyle_alpha)
+                    pt_feats[maestro_mask] = mixstyle(pt_feats[maestro_mask], self.mix_config.mixstyle_alpha)
+
+            if self.mix_config.mixstyle_unlabeled:
+                sed_feats[unlabeled_mask] = mixstyle(sed_feats[unlabeled_mask], self.mix_config.mixstyle_alpha)
+                pt_feats[unlabeled_mask] = mixstyle(pt_feats[unlabeled_mask], self.mix_config.mixstyle_alpha)
+
+        if self.fwarp_config.apply and self.fwarp_config.p > random.random():
+            pt_feats = pt_feats.squeeze(1)
+            pt_feats[weak_mask] = self.freq_warp(pt_feats[weak_mask])
+            pt_feats[desed_strong_mask] = self.freq_warp(pt_feats[desed_strong_mask])
+            pt_feats[unlabeled_mask] = self.freq_warp(pt_feats[unlabeled_mask])
+            if self.fwarp_config.include_maestro:
+                pt_feats[maestro_mask] = self.freq_warp(pt_feats[maestro_mask])
+            pt_feats = pt_feats.unsqueeze(1)
+
+        if self.fa_config.apply and self.fa_config.p > random.random():
+            sed_feats, _ = feature_transformation(sed_feats, self.fa_config.n_transform,
+                                                  self.fa_config.filter_db_range,
+                                                  self.fa_config.filter_bands,
+                                                  self.fa_config.filter_minimum_bandwidth)
+
+            pt_feats, _ = feature_transformation(pt_feats, self.fa_config.n_transform,
+                                                 self.fa_config.filter_db_range,
+                                                 self.fa_config.filter_bands,
+                                                 self.fa_config.filter_minimum_bandwidth)
 
         # mask labels for invalid datasets classes after mixup.
         labels = labels.masked_fill(~valid_class_mask[:, :, None].expand_as(labels), 0.0)
@@ -838,14 +1009,13 @@ class T4Module(L.LightningModule):
         if self.config.pseudo_strong_no_class_mask is False:
             pseudo_strong = pseudo_strong.masked_fill(~valid_class_mask[:, :, None].expand_as(pseudo_strong), 0.0)
 
-        # set transformer model to eval mode
-        self.student.as_model.eval()
         # sed student forward
-        (strong_preds_student, weak_preds_student), (strong_preds_student_all, weak_preds_student_all) = self.detect(
-            features_stud,
+        (strong_preds_student, weak_preds_student), (
+        strong_preds_student_all, weak_preds_student_all) = self.detect(
+            sed_feats,
             pt_feats,
             self.student,
-            classes_mask=(valid_class_mask, None)  # "None" for potentially calculating ssl loss on all classes
+            classes_mask=(valid_class_mask, None)
         )
 
         with autocast(enabled=False, device_type='cuda'):
@@ -879,37 +1049,136 @@ class T4Module(L.LightningModule):
             )
 
         # total supervised loss
-        strong_loss = self.loss_weights[0] * loss_maestro + \
-                      self.loss_weights[1] * loss_desed_real_strong + \
-                      self.loss_weights[2] * loss_desed_synth
-        weak_loss = self.loss_weights[3] * loss_weak
+        strong_loss = (self.loss_weights[0] * loss_maestro +
+                       self.loss_weights[1] * loss_desed_real_strong +
+                       self.loss_weights[2] * loss_desed_synth) / 3
+        weak_loss = (self.loss_weights[3] * loss_weak) / 2
         tot_loss_supervised = strong_loss + weak_loss
 
-        self.teacher.as_model.eval()
         with torch.no_grad():
+            # teacher predictions based on unaugmented samples
             strong_preds_teacher, weak_preds_teacher = self.detect(
-                features_teach,
-                pt_feats,
+                sed_feats_org,
+                pt_feats_org,
                 self.teacher,
                 classes_mask=None if self.config.ssl_no_class_mask else valid_class_mask
             )
 
         if self.config.ssl_no_class_mask:
-            strong_preds_student_ssl = strong_preds_student_all
-            weak_preds_student_ssl = weak_preds_student_all
+            strong_preds_student = strong_preds_student_all
+            weak_preds_student = weak_preds_student_all
+
+        ssl_weight = min(
+            self.global_step / self.config.ssl_loss_warmup_steps * self.loss_weights[4],
+            self.loss_weights[4] * self.config.ssl_scale_max
+        )
+
+        # either ICT or Mean Teacher loss
+        if perm_weak is not None and self.config.use_ict_loss:
+            # the ICT loss it is
+
+            # weak subset
+            c_weak = torch.tensor(c_weak, dtype=strong_preds_teacher.dtype, device=strong_preds_teacher.device)
+            strong_org, weak_org = strong_preds_teacher[weak_mask], weak_preds_teacher[weak_mask]
+            c_shape_strong = (strong_org.size(0), 1, 1)
+            c_shape_weak = (weak_org.size(0), 1)
+            assert len(c_shape_strong) == len(strong_org.shape)
+            assert len(c_shape_weak) == len(weak_org.shape)
+            strong_mix = c_weak.view(c_shape_strong) * strong_org + \
+                         (1 - c_weak.view(c_shape_strong)) * strong_org[perm_weak]
+            weak_mix = c_weak.view(c_shape_weak) * weak_org + \
+                       (1 - c_weak.view(c_shape_weak)) * weak_org[perm_weak]
+            loss_ict_weak = self.selfsup_loss(strong_preds_student[weak_mask], strong_mix.clamp(0, 1).detach()) + \
+                            self.selfsup_loss(weak_preds_student[weak_mask], weak_mix.clamp(0, 1).detach()) / 2
+
+            # unlabeled subset
+            c_unlabeled = torch.tensor(c_unlabeled, dtype=strong_preds_teacher.dtype,
+                                       device=strong_preds_teacher.device)
+            strong_org, weak_org = strong_preds_teacher[unlabeled_mask], weak_preds_teacher[unlabeled_mask]
+            c_shape_strong = (strong_org.size(0), 1, 1)
+            c_shape_weak = (weak_org.size(0), 1)
+            strong_mix = c_unlabeled.view(c_shape_strong) * strong_org + \
+                         (1 - c_unlabeled.view(c_shape_strong)) * strong_org[perm_unlabeled]
+            weak_mix = c_unlabeled.view(c_shape_weak) * weak_org + \
+                       (1 - c_unlabeled.view(c_shape_weak)) * weak_org[perm_unlabeled]
+            loss_ict_unlabeled = self.selfsup_loss(strong_preds_student[unlabeled_mask],
+                                                   strong_mix.clamp(0, 1).detach()) + \
+                                 self.selfsup_loss(weak_preds_student[unlabeled_mask],
+                                                   weak_mix.clamp(0, 1).detach()) / 2
+
+            if perm_maestro is not None:
+                # strong subset
+                c_strong = torch.tensor(c_strong, dtype=strong_preds_teacher.dtype,
+                                        device=strong_preds_teacher.device)
+                strong_org, weak_org = strong_preds_teacher[desed_strong_mask], weak_preds_teacher[desed_strong_mask]
+                c_shape_strong = (strong_org.size(0), 1, 1)
+                c_shape_weak = (weak_org.size(0), 1)
+                strong_mix = c_strong.view(c_shape_strong) * strong_org + \
+                             (1 - c_strong.view(c_shape_strong)) * strong_org[perm_strong]
+                weak_mix = c_strong.view(c_shape_weak) * weak_org + \
+                           (1 - c_strong.view(c_shape_weak)) * weak_org[perm_strong]
+                loss_ict_strong = self.selfsup_loss(strong_preds_student[desed_strong_mask],
+                                                    strong_mix.clamp(0, 1).detach()) + \
+                                  self.selfsup_loss(weak_preds_student[desed_strong_mask],
+                                                    weak_mix.clamp(0, 1).detach()) / 2
+
+                # maestro subset
+                c_maestro = torch.tensor(c_maestro, dtype=strong_preds_teacher.dtype,
+                                         device=strong_preds_teacher.device)
+                strong_org, weak_org = strong_preds_teacher[maestro_mask], weak_preds_teacher[maestro_mask]
+                c_shape_strong = (strong_org.size(0), 1, 1)
+                c_shape_weak = (weak_org.size(0), 1)
+                strong_mix = c_maestro.view(c_shape_strong) * strong_org + \
+                             (1 - c_maestro.view(c_shape_strong)) * strong_org[perm_maestro]
+                weak_mix = c_maestro.view(c_shape_weak) * weak_org + \
+                           (1 - c_maestro.view(c_shape_weak)) * weak_org[perm_maestro]
+
+                if self.config.exclude_maestro_weak_ssl:
+                    weak_weight = 0
+                else:
+                    weak_weight = 1
+                loss_ict_maestro = self.selfsup_loss(strong_preds_student[maestro_mask],
+                                                     strong_mix.clamp(0, 1).detach()) + \
+                                   self.selfsup_loss(weak_preds_student[maestro_mask],
+                                                     weak_mix.clamp(0, 1).detach()) / 2 * weak_weight
+            else:
+                c_strong = torch.tensor(c_strong, dtype=strong_preds_teacher.dtype,
+                                        device=strong_preds_teacher.device)
+                # joint mixup of desed strong and maestro
+                strong_org, weak_org = strong_preds_teacher[all_strong_mask], weak_preds_teacher[all_strong_mask]
+                c_shape_strong = (strong_org.size(0), 1, 1)
+                c_shape_weak = (weak_org.size(0), 1)
+                strong_mix = c_strong.view(c_shape_strong) * strong_org + \
+                             (1 - c_strong.view(c_shape_strong)) * strong_org[perm_strong]
+                weak_mix = c_strong.view(c_shape_weak) * weak_org + \
+                           (1 - c_strong.view(c_shape_weak)) * weak_org[perm_strong]
+
+                if self.config.exclude_maestro_weak_ssl:
+                    mask_events_desed = set(classes_labels_desed.keys())
+                    if self.config.training.use_desed_maestro_alias:
+                        mask_events_desed = mask_events_desed.union(set(["cutlery and dishes", "people talking"]))
+                    classes_mask = torch.ones(len(self.encoder.labels))
+                    for indx, cls in enumerate(self.encoder.labels):
+                        if cls not in mask_events_desed:
+                            classes_mask[indx] = 0
+                    classes_mask = classes_mask.to(weak_mix).bool()
+                else:
+                    classes_mask = torch.ones(len(self.encoder.labels))
+                    classes_mask = classes_mask.to(weak_mix).bool()
+
+                loss_ict_strong = self.selfsup_loss(strong_preds_student[all_strong_mask],
+                                                    strong_mix.clamp(0, 1).detach()) + \
+                                  self.selfsup_loss(weak_preds_student[all_strong_mask][:, classes_mask],
+                                                    weak_mix[:, classes_mask].clamp(0, 1).detach()) / 2
+                loss_ict_maestro = loss_ict_strong
+
+            loss_ict = (loss_ict_strong + loss_ict_weak + loss_ict_unlabeled + loss_ict_maestro) / 8
+            tot_self_loss = loss_ict * ssl_weight / 4
+            self.log("train/student/tot_ict_loss", loss_ict)
         else:
-            strong_preds_student_ssl = strong_preds_student
-            weak_preds_student_ssl = weak_preds_student
-
-        with autocast(enabled=False, device_type='cuda'):
-            strong_preds_student_ssl = strong_preds_student_ssl.float()
-            strong_preds_teacher = strong_preds_teacher.float()
-            weak_preds_student_ssl = weak_preds_student_ssl.float()
-            weak_preds_teacher = weak_preds_teacher.float()
-
+            # Meant Teacher loss
             strong_self_sup_loss = self.selfsup_loss(
-                strong_preds_student_ssl[ssl_mask],
-                strong_preds_teacher.detach()[ssl_mask]
+                strong_preds_student[ssl_mask], strong_preds_teacher.detach()[ssl_mask]
             )
 
             if self.config.exclude_maestro_weak_ssl:
@@ -919,50 +1188,41 @@ class T4Module(L.LightningModule):
                 ssl_mask_weak = torch.clone(ssl_mask)
 
             weak_self_sup_loss = self.selfsup_loss(
-                weak_preds_student_ssl[ssl_mask_weak],
-                weak_preds_teacher.detach()[ssl_mask_weak]
+                weak_preds_student[ssl_mask_weak], weak_preds_teacher.detach()[ssl_mask_weak]
             )
 
-        ssl_weight = min(
-            self.global_step / self.config.ssl_loss_warmup_steps * self.loss_weights[4],
-            self.loss_weights[4] * self.config.ssl_scale_max
-        )
-        tot_self_loss = (strong_self_sup_loss + weak_self_sup_loss) * ssl_weight
+            tot_self_loss = (strong_self_sup_loss + weak_self_sup_loss / 2) * ssl_weight
+            self.log("train/student/weak_self_sup_loss", weak_self_sup_loss)
+            self.log("train/student/strong_self_sup_loss", strong_self_sup_loss)
 
-        if self.config.pseudo_strong_no_class_mask:
-            strong_preds_student_ps = strong_preds_student_all
-        else:
-            strong_preds_student_ps = strong_preds_student
+        # pseudo label loss
+        with autocast(enabled=False, device_type='cuda'):
+            strong_preds_student = strong_preds_student.float()
+            pseudo_strong.float()
 
-        if self.loss_weights[5] > 0:  # skip pseudo loss if weight is 0, otherwise we might run into shape issues.
-            # pseudo label loss
-            with autocast(enabled=False, device_type='cuda'):
-                strong_preds_student_ps = strong_preds_student_ps.float()
-                pseudo_strong = pseudo_strong.float()
+            loss_pseudo_desed = self.pseudo_label_loss(
+                strong_preds_student[desed_mask],
+                pseudo_strong[desed_mask]
+            )
 
-                loss_pseudo_desed = self.pseudo_label_loss(
-                    strong_preds_student_ps[desed_mask],
-                    pseudo_strong[desed_mask]
-                )
+            loss_pseudo_maestro = self.pseudo_label_loss(
+                strong_preds_student[maestro_mask],
+                pseudo_strong[maestro_mask]
+            )
 
-                loss_pseudo_maestro = self.pseudo_label_loss(
-                    strong_preds_student_ps[maestro_mask],
-                    pseudo_strong[maestro_mask]
-                )
+            # weight pseudo label losses on desed and maestro according to their corresponding
+            # supervised loss weight
+            loss_pseudo_desed = loss_pseudo_desed * (self.loss_weights[1] + self.loss_weights[2] + self.loss_weights[3])
+            loss_pseudo_maestro = loss_pseudo_maestro * self.loss_weights[0]
+            pseudo_label_loss = (loss_pseudo_desed + loss_pseudo_maestro) * self.loss_weights[5]
 
-                # weight pseudo label losses on desed and maestro according to their corresponding
-                # supervised loss weights
-                loss_pseudo_desed = loss_pseudo_desed * (self.loss_weights[1] + self.loss_weights[2] + self.loss_weights[3])
-                loss_pseudo_maestro = loss_pseudo_maestro * self.loss_weights[0]
-                pseudo_strong_loss = (loss_pseudo_desed + loss_pseudo_maestro) * self.loss_weights[5]
-        else:
-            pseudo_strong_loss = 0.0
+        tot_loss = tot_loss_supervised + tot_self_loss + pseudo_label_loss
 
-        tot_loss = tot_loss_supervised + tot_self_loss + pseudo_strong_loss
-        tot_loss = tot_loss * len(self.loss_weights[:-1])  # to keep weighting behaviour
         cnn_lr = self.optimizers().param_groups[0]["lr"]
+        rnn_lr = self.optimizers().param_groups[1]["lr"]
+        pt_lr = self.optimizers().param_groups[-1]["lr"]
 
-        self.log("train/student/pseudo_strong_loss", pseudo_strong_loss)
+        self.log("train/student/loss_pseudo", pseudo_label_loss)
         self.log("train/student/loss_desed_synth", loss_desed_synth)
         self.log("train/student/loss_desed_real_strong", loss_desed_real_strong)
         self.log("train/student/loss_maestro", loss_maestro)
@@ -970,9 +1230,9 @@ class T4Module(L.LightningModule):
         self.log("train/student/loss_weak", weak_loss)
         self.log("train/student/tot_ssl", tot_self_loss, prog_bar=True)
         self.log("train/student/tot_supervised", tot_loss_supervised, prog_bar=True)
-        self.log("train/student/weak_self_sup_loss", weak_self_sup_loss)
-        self.log("train/student/strong_self_sup_loss", strong_self_sup_loss)
         self.log("train/cnn_lr", cnn_lr, prog_bar=True)
+        self.log("train/rnn_lr", rnn_lr, prog_bar=True)
+        self.log("train/pt_lr", pt_lr, prog_bar=True)
         self.log("train/ssl_weight", ssl_weight)
         self.log("train/epoch", self.current_epoch)
 

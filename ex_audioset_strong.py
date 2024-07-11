@@ -13,7 +13,7 @@ from torch.utils.data import DataLoader
 import lightning as L
 from lightning.pytorch.loggers import WandbLogger
 
-from config_updates import add_configs
+from configs import add_configs
 from helpers.hub_mixin import PyTorchModelHubMixin
 from helpers.utils import config_call, register_print_hooks
 from helpers.workersinit import worker_init_fn

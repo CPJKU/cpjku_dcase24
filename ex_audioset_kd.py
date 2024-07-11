@@ -8,7 +8,7 @@ import numpy as np
 import transformers
 import wandb
 
-from config_updates import add_configs
+from configs import add_configs
 from helpers.utils import config_call
 from helpers.workersinit import worker_init_fn
 from sacred import Experiment
@@ -299,7 +299,7 @@ class BL23Module(L.LightningModule):
         net.arch = arch
         if self.config.wrapper_name == "AudiosetWrapper":
             self.net = AudiosetWrapper(net, 527, embed_dim, seq_len=self.config.seq_len, use_attention_head=True,
-                                       wandb_id=self.config[arch]["wandb_id"])
+                                       pretrained_name=self.config[arch]["wandb_id"])
         else:
             raise ValueError(f"Unknown wrapper_name: {self.config.wrapper_name}")
 

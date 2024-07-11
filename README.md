@@ -4,15 +4,51 @@ This is the repo that will soon be holding the full code for our [DCASE 2024 Tas
 
 The repository is currently **under construction** and will be cleaned for public use. It currently contains:
 * Datasets and Dataloading
-* Models
+* ATST
 * Stage 1 Training
+* Stage 2 Training
 
 We will further include:
-* Instructions how to get the datasets
-* Stage 2 Training
+* fPaSST, BEATs
 * AudioSet strong pre-training
-* Pre-Trained Models
+* Pre-Trained Model Checkpoints
 * A cleaner version of the code
+
+
+## Data Setup
+
+### AudioSet (strong)
+
+1. Download the audio snippets by using the scripts provided by [PANNs](https://github.com/qiuqiangkong/audioset_tagging_cnn).
+
+2. Download the temporally-strong labels from the [official site](https://research.google.com/audioset/download_strong.html).
+
+### DESED
+
+Follow the official instructions [here](https://dcase.community/challenge2024/task-sound-event-detection-with-heterogeneous-training-dataset-and-potentially-missing-labels). Missing files can be requested by contacting the DCASE task organizers.
+
+Extra strongly-labeled data extracted from strongly-labeled AudioSet with classes mapped to DESED classes can be found [here](https://saoyear.github.io/post/downloading-real-waveforms-for-desed/).
+
+### MAESTRO
+
+Follow the official instructions [here](https://dcase.community/challenge2024/task-sound-event-detection-with-heterogeneous-training-dataset-and-potentially-missing-labels).
+
+### Summary
+
+If you have collected all clips, you should have the following sets:
+
+* **Synth**: 10,000 synthetic strongly-labeled clips
+* **Synth_Val**: 2,500 synthetic strongly-labeled clips
+* **Weak**: 1,578 weakly-labeled clips
+* **Unlabeled**: 14,412 unlabeled clips
+* **Strong**: 3,470 strongly-labeled real clips from AudioSet
+* **External_Strong**: 7,383 external strongly-labeled real clips from AudioSet
+* **Test**: 1,168 strongly-labeled real clips (for **testing**)
+* **Real_MAESTRO_Train**: 7,503 real strongly-labeled clips from MAESTRO
+* **Real_MAESTRO_Val**: 3,474 real strongly-labeled clips from MAESTRO (for **testing**)
+
+Store the base path to the dataset in variable ```DATASET_PATH``` in the file [configs.py](configs.py). The structure of the 
+dataset must match the structure in variable ```t4_paths``` in files [ex_stage1.py](ex_stage1.py) and [ex_stage2.py](ex_stage2.py).
 
 ## Environment Setup
 
@@ -56,11 +92,29 @@ Get token from <https://wandb.ai/authorize>
  wandb login
 ```
 
+## Resource Setup
+
+Pseudo-labels and pre-trained model checkpoints are available in [this GitHub release](https://github.com/CPJKU/cpjku_dcase24/releases/tag/files).
+
+These files are intended to end up in the folder [resources](resources). We provide a script that is downloading all files at once from the release
+and placing them in the [resources](resources) folder:
+
+ ```bash
+python download_resources.py
+ ```
+
+Alternatively, you can just download the files you need and want to work with.
+
 ## Example Command: Stage 1 Training w. ATST
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 python -m ex_stage1 with arch=atst_frame loss_weights="(0.5, 0.25, 0.12, 0.1, 0.1, 1.5)" trainer.max_epochs=200 optimizer.crnn_lr=0.0005 filter_augment.apply=0 training.pseudo_labels_name=final mix_augment.apply_mixstyle=0 wandb.name=s1.i1,atst
+CUDA_VISIBLE_DEVICES=0 python -m ex_stage1 with arch=atst_frame loss_weights="(0.5, 0.25, 0.12, 0.1, 0.1, 1.5)" trainer.max_epochs=200 optimizer.crnn_lr=0.0005 filter_augment.apply=0 training.pseudo_labels_name=final mix_augment.apply_mixstyle=0 ssl_no_class_mask=1 wandb.name=s1.i1,atst
 ```
+
+
 
 ## Example Command: Stage 2 Training w. ATST
 
+```bash
+CUDA_VISIBLE_DEVICES=0 python -m ex_stage2 with arch=atst_frame trainer.accumulate_grad_batches=8 loss_weights="(12, 3, 0.25, 1, 60, 0)" t4_wrapper.model_init_id=6mwmg1e0 optimizer.pt_lr_scale=0.5 optimizer.cnn_lr=1e-5 optimizer.rnn_lr=1e-4 freq_warp.include_maestro=1 optimizer.adamw=1 optimizer.weight_decay=1e-3 wandb.name=s2.i1,atst
+```

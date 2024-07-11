@@ -30,7 +30,6 @@ def get_training_dataset(
     include_external_strong=True,
     exclude_overlapping=True,
     use_pseudo_labels=True,
-    pseudo_labels_name="final",
     wavmix_p=0.0,
     wavmix_target="strong",
     dir_p=0.0,
@@ -68,8 +67,7 @@ def get_training_dataset(
         encoder,
         pad_to=audio_length,
         fs=sample_rate,
-        pseudo_labels_hdf5_file=paths["pseudo_labels"].format(
-            pseudo_labels_name, "synth_train") if use_pseudo_labels else None,
+        pseudo_labels_hdf5_file=paths["pseudo_labels"].format("synth_train") if use_pseudo_labels else None,
         mask_events_other_than=mask_events_desed
     )
 
@@ -87,8 +85,7 @@ def get_training_dataset(
         pad_to=audio_length,
         fs=sample_rate,
         exclude_files=paths["strong_tsv_exclude"] if exclude_overlapping else None,
-        pseudo_labels_hdf5_file=paths["pseudo_labels"].format(
-            pseudo_labels_name, "strong_train") if use_pseudo_labels else None,
+        pseudo_labels_hdf5_file=paths["pseudo_labels"].format("strong_train") if use_pseudo_labels else None,
         mask_events_other_than=mask_events_desed
     )
 
@@ -110,8 +107,7 @@ def get_training_dataset(
             encoder,
             pad_to=audio_length,
             fs=sample_rate,
-            pseudo_labels_hdf5_file=paths["pseudo_labels"].format(
-                pseudo_labels_name, "external_strong_train") if use_pseudo_labels else None,
+            pseudo_labels_hdf5_file=paths["pseudo_labels"].format("external_strong_train") if use_pseudo_labels else None,
             mask_events_other_than=mask_events_desed
         )
 
@@ -129,8 +125,7 @@ def get_training_dataset(
             encoder,
             pad_to=audio_length,
             fs=sample_rate,
-            pseudo_labels_hdf5_file=paths["pseudo_labels"].format(
-                pseudo_labels_name, "devtest") if use_pseudo_labels else None,
+            pseudo_labels_hdf5_file=paths["pseudo_labels"].format("devtest") if use_pseudo_labels else None,
             mask_events_other_than=mask_events_desed
         )
 
@@ -155,8 +150,7 @@ def get_training_dataset(
         pad_to=audio_length,
         fs=sample_rate,
         exclude_files=paths["weak_tsv_exclude"] if exclude_overlapping else None,
-        pseudo_labels_hdf5_file=paths["pseudo_labels"].format(
-            pseudo_labels_name, "weak_train") if use_pseudo_labels else None,
+        pseudo_labels_hdf5_file=paths["pseudo_labels"].format("weak_train") if use_pseudo_labels else None,
         mask_events_other_than=mask_events_desed
     )
 
@@ -176,8 +170,7 @@ def get_training_dataset(
         pad_to=audio_length,
         fs=sample_rate,
         exclude_files=paths["unlabeled_tsv_exclude"] if exclude_overlapping else None,
-        pseudo_labels_hdf5_file=paths["pseudo_labels"].format(
-            pseudo_labels_name, "unlabeled_train") if use_pseudo_labels else None,
+        pseudo_labels_hdf5_file=paths["pseudo_labels"].format("unlabeled_train") if use_pseudo_labels else None,
         mask_events_other_than=mask_events_desed
     )
 
@@ -200,8 +193,7 @@ def get_training_dataset(
         encoder,
         pad_to=audio_length,
         fs=sample_rate,
-        pseudo_labels_hdf5_file=paths["pseudo_labels"].format(
-            pseudo_labels_name, "maestro_real_train") if use_pseudo_labels else None,
+        pseudo_labels_hdf5_file=paths["pseudo_labels"].format("maestro_real_train") if use_pseudo_labels else None,
         mask_events_other_than=mask_events_maestro_real,
     )
 
@@ -221,8 +213,7 @@ def get_training_dataset(
             encoder,
             pad_to=audio_length,
             fs=sample_rate,
-            pseudo_labels_hdf5_file=paths["pseudo_labels"].format(
-                pseudo_labels_name, "maestro_real_dev") if use_pseudo_labels else None,
+            pseudo_labels_hdf5_file=paths["pseudo_labels"].format("maestro_real_dev") if use_pseudo_labels else None,
             mask_events_other_than=mask_events_maestro_real,
         )
 

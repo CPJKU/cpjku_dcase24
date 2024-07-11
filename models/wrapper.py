@@ -6,7 +6,7 @@ import torchaudio
 
 from models.baseline.RNN import BidirectionalGRU
 from models.baseline.CNN import CNN
-from config_updates import pretrained_audioset, pretrained_stage1
+from configs import PRETRAINED_AUDIOSET, PRETRAINED_S1
 
 
 first_RUN = True
@@ -14,10 +14,10 @@ first_RUN = True
 
 class AudiosetWrapper(nn.Module):
     def __init__(self, model, audioset_classes=527, embed_dim=768, seq_len=250,
-                 use_attention_head=False, wandb_id=None):
+                 use_attention_head=False, pretrained_name=None):
         super(AudiosetWrapper, self).__init__()
         self.model = model
-        self.wandb_id = wandb_id
+        self.pretrained_name = pretrained_name
 
         self.seq_len = seq_len
 
@@ -28,14 +28,14 @@ class AudiosetWrapper(nn.Module):
         self.att_linear_layer = nn.Linear(self.num_features, self.audioset_classes)
         self.use_attention_head = use_attention_head
 
-        if self.wandb_id:
+        if self.pretrained_name:
             self.load_model()
 
         if not self.use_attention_head:
             del self.att_linear_layer
 
     def load_model(self):
-        pretrained_weights = torch.load(os.path.join(pretrained_audioset, self.wandb_id + ".ckpt"),
+        pretrained_weights = torch.load(os.path.join(PRETRAINED_AUDIOSET, self.pretrained_name + ".ckpt"),
                                         map_location="cpu")["state_dict"]
         state_dict_keys = pretrained_weights.keys()
         # check wheter state_dict of dual model
@@ -73,7 +73,7 @@ class AudiosetWrapper(nn.Module):
         else:
             pretrained_weights = {k[4:]: v for k, v in pretrained_weights.items() if k[:4] == "net."}
             self.load_state_dict(pretrained_weights)
-        print("Loaded model successfully. Wandb_id:", self.wandb_id)
+        print("Loaded model successfully. Pretrained Name:", self.pretrained_name)
 
     def forward(self, x):
         x = self.model(x)
@@ -96,7 +96,7 @@ class AudiosetWrapper(nn.Module):
 
 class Task4RNNASStrongWrapper(nn.Module):
     def __init__(self, model, audioset_classes=527, seq_len=250, embed_dim=768, rnn_type="BGRU",
-                 rnn_dim=256, rnn_layers=2, rnn_dropout=0.0, n_classes=10, wandb_id=None,
+                 rnn_dim=256, rnn_layers=2, rnn_dropout=0.0, n_classes=10, pretrained_name=None,
                  load_wrapper_parameters=False, exclude_clf_head=False, skip_audiosetwrapper=False,
                  use_attention_head=True):
         super(Task4RNNASStrongWrapper, self).__init__()
@@ -114,8 +114,8 @@ class Task4RNNASStrongWrapper(nn.Module):
             self.model = model
         else:
             self.model = AudiosetWrapper(model, audioset_classes, embed_dim, seq_len, use_attention_head=False,
-                                     wandb_id=None if load_wrapper_parameters else wandb_id)
-        self.wandb_id = wandb_id
+                                         pretrained_name=None if load_wrapper_parameters else pretrained_name)
+        self.pretrained_name = pretrained_name
 
         if rnn_type == "BGRU":
             self.rnn = BidirectionalGRU(
@@ -130,19 +130,19 @@ class Task4RNNASStrongWrapper(nn.Module):
         self.sigmoid_dense = nn.Linear(rnn_dim * 2 if rnn_layers > 0 else input_dim, self.n_classes)
         self.softmax_dense = nn.Linear(rnn_dim * 2 if rnn_layers > 0 else input_dim, self.n_classes)
 
-        if load_wrapper_parameters and wandb_id:
+        if load_wrapper_parameters and pretrained_name:
             self.load_model()
 
         if not self.use_attention_head:
             del self.softmax_dense
 
     def load_model(self):
-        pretrained_weights = torch.load(os.path.join(pretrained_path, self.wandb_id + ".ckpt"), map_location="cpu")["state_dict"]
+        pretrained_weights = torch.load(os.path.join(PRETRAINED_AUDIOSET, self.pretrained_name + ".ckpt"), map_location="cpu")["state_dict"]
         pretrained_weights = {".".join(k.split(".")[1:]): v for k, v in pretrained_weights.items() if k.startswith("net_strong.")}
         if self.exclude_clf_head:
             pretrained_weights = {k: v for k, v in pretrained_weights.items() if not (k.startswith("sigmoid_dense") or k.startswith("softmax_dense"))}
         self.load_state_dict(pretrained_weights, strict=not self.exclude_clf_head)
-        print("Loaded model successfully. Wandb_id:", self.wandb_id)
+        print("Loaded model successfully. Pretrained Name:", self.pretrained_name)
 
     def forward(self, x):
         x = self.model(x)
@@ -163,7 +163,7 @@ class Task4RNNASStrongWrapper(nn.Module):
 class Task4CRNNEmbeddingsWrapper(nn.Module):
     def __init__(self,
                  as_model,
-                 wandb_id=None,
+                 pretrained_name=None,
                  audioset_classes=527,
                  load_full_as_strong_model=False,
                  audioset_strong_classes=456,
@@ -238,18 +238,18 @@ class Task4CRNNEmbeddingsWrapper(nn.Module):
             self.as_model_dim = embedding_size
         elif no_wrapper_pretrained:
             self.as_model = AudiosetWrapper(as_model, audioset_classes, embedding_size, use_attention_head=False,
-                                            wandb_id=wandb_id).model
+                                            pretrained_name=pretrained_name).model
             self.as_model_dim = embedding_size
         elif load_full_as_strong_model:
             self.as_model = Task4RNNASStrongWrapper(as_model, audioset_classes, rnn_dim=as_strong_rnn_dim,
                                                     rnn_layers=as_strong_rnn_layers, n_classes=audioset_strong_classes,
                                                     load_wrapper_parameters=True, use_attention_head=False,
                                                     skip_audiosetwrapper=as_strong_skip_as_wrapper,
-                                                    embed_dim=embedding_size, wandb_id=wandb_id)
+                                                    embed_dim=embedding_size, pretrained_name=pretrained_name)
             self.as_model_dim = audioset_strong_classes
         else:
             self.as_model = AudiosetWrapper(as_model, audioset_classes, embedding_size, use_attention_head=False,
-                                            wandb_id=wandb_id)
+                                            pretrained_name=pretrained_name)
             self.as_model_dim = audioset_classes
 
         self.interpolation_mode = interpolation_mode
@@ -294,7 +294,7 @@ class Task4CRNNEmbeddingsWrapper(nn.Module):
             param.detach_()
 
         if model_init_id:
-            ckpt = os.path.join(pretrained_stage1, model_init_id + ".ckpt")
+            ckpt = os.path.join(PRETRAINED_S1, model_init_id + ".ckpt")
             if model_init_mode == "teacher":
                 print("Loaded teacher from ckpt: ", ckpt)
                 state_dict = torch.load(ckpt, map_location="cpu")["teacher"]
