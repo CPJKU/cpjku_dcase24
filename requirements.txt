@@ -1,0 +1,17 @@
+av>=10.0.0
+h5py>=3.8.0
+jsonpickle>=3.0.1
+kk-sacred>=0.8.5
+librosa>=0.10.0.post2
+timm>=0.4.12
+torchmetrics>=0.2.0
+pytorch-lightning>=2.0.0
+wandb==0.12.21
+einops
+lightning>=2.1.0
+transformers
+dcase_util>=0.2.16
+psds_eval>=0.4.0
+sed_eval>=0.2.1
+sed_scores_eval==0.0.3
+codecarbon==2.3.4
