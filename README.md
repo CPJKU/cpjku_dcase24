@@ -1,19 +1,20 @@
-# cpjku_dcase24
+# CP Submission to DCASE'24 Task 4
 
-This is the repo that will soon be holding the full code for our [DCASE 2024 Task 4](https://dcase.community/challenge2024/task-sound-event-detection-with-heterogeneous-training-dataset-and-potentially-missing-labels) submission.
+This is the repo that will soon be holding the full code for our [DCASE 2024 Task 4](https://dcase.community/challenge2024/task-sound-event-detection-with-heterogeneous-training-dataset-and-potentially-missing-labels-results) submission.
+
+The setup is described in the paper [Multi-Iteration Multi-Stage Fine-Tuning of Transformers for Sound Event Detection with Heterogeneous Datasets](https://arxiv.org/abs/2407.12997).
 
 The repository is currently **under construction** and will be cleaned for public use. It currently contains:
 * Datasets and Dataloading
 * ATST
 * Stage 1 Training
 * Stage 2 Training
+* Pre-Trained Model Checkpoints
 
 We will further include:
 * fPaSST, BEATs
 * AudioSet strong pre-training
-* Pre-Trained Model Checkpoints
-* A cleaner version of the code
-
+* cSEBBs postprocessing
 
 ## Data Setup
 
@@ -92,7 +93,7 @@ Get token from <https://wandb.ai/authorize>
  wandb login
 ```
 
-## Resource Setup
+## Resources Setup
 
 Pseudo-labels and pre-trained model checkpoints are available in [this GitHub release](https://github.com/CPJKU/cpjku_dcase24/releases/tag/files).
 
