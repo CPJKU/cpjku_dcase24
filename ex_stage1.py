@@ -26,6 +26,9 @@ import transformers
 
 # models
 from models.atst.atst_model_wrapper import ATSTWrapper, ATSTMel
+from models.fpasst import fpasst as passt
+from models.beats.BEATs_wrapper import BEATsWrapper
+from models import preprocess
 from models.wrapper import Task4CRNNEmbeddingsWrapper
 from helpers.encoder import get_encoder
 
@@ -37,7 +40,7 @@ from datasets.classes_dict import classes_labels_desed, classes_labels_maestro_r
     classes_labels_maestro_real_eval
 
 # config & logging
-from configs import add_configs, PRETRAINED_AUDIOSET, DATASET_PATH
+from config_updates import add_configs, pretrained_models, dataset_path
 from helpers.utils import config_call, register_print_hooks
 from sacred import Experiment
 from sacred.config_helpers import CMD
@@ -133,6 +136,10 @@ many_hot_encoder = ex.command(get_encoder, prefix="encoder")
 ## atst
 atst_mel = ex.command(ATSTMel, prefix="atst_mel")
 
+## fPaSST
+passt_mel = ex.command(preprocess.AugmentMelSTFT, prefix="passt_mel")
+passt_net = ex.command(passt.get_model, prefix="passt")
+
 ## crnn
 MelSpectrogram = ex.command(MelSpectrogram, prefix="mel")
 Task4CRNNEmbeddingsWrapper = ex.command(Task4CRNNEmbeddingsWrapper, prefix="t4_wrapper")
@@ -184,6 +191,38 @@ def default_conf():
         power=1,
     )
 
+    passt_mel = dict(
+        n_mels=128,
+        sr=16_000,
+        win_length=400,
+        hopsize=160,
+        n_fft=512,
+        freqm=0,
+        timem=0,
+        htk=False,
+        fmin=0.0,
+        fmax=None,
+        norm=1,
+        fmin_aug_range=1,
+        fmax_aug_range=1,
+        fast_norm=True,
+        preamp=True,
+        trainable=False,
+        padding="center",
+        periodic_window=True,
+    )
+
+    passt = dict(
+        arch="passt_deit_bd_p16_384",
+        n_classes=527,
+        embed_dim=768,
+        sample_rate=16_000,
+        pos_embed_length=250,
+        frame_patchout=0,
+        in_channels=16,
+        pretrained_name="passt_as_strong"
+    )
+
     encoder = dict(
         audio_len=10,
         frame_len=2048,
@@ -194,6 +233,10 @@ def default_conf():
 
     atst_frame = dict(
         pretrained_name="atst_as_strong"
+    )
+
+    beats = dict(
+        pretrained_name=None
     )
 
     t4_wrapper = dict(
@@ -234,6 +277,8 @@ def default_conf():
     validation = dict(sample_rate=sample_rate)
     test = dict(sample_rate=sample_rate)
 
+    gain_augment = 0
+
     # maestro, strong real, strong synth, weak, unlabeled (ssl loss), pseudo strong loss
     # these loss weights are the results of a (painful) tuning process; they might be far from optimal
     loss_weights = (0.08, 0.05, 0.08, 0.21, 0.58, 0.0)
@@ -242,7 +287,7 @@ def default_conf():
     val_thresholds = [0.5]
 
     # the following dict holds all the paths necessary to load all the different parts of the dataset
-    base_path = DATASET_PATH
+    base_path = dataset_path
     t4_paths = dict(
         synth_folder=os.path.join(base_path, "dcase_synth/audio/train/synthetic21_train/soundscapes_16k/"),
         synth_folder_44k=os.path.join(base_path, "dcase_synth/audio/train/synthetic21_train/soundscapes/"),
@@ -278,7 +323,6 @@ def default_conf():
         real_maestro_val_folder_44k=os.path.join(base_path, "audio/maestro_real_validation"),
         real_maestro_val_tsv=os.path.join(base_path, "metadata/maestro_real_validation.tsv"),
         real_maestro_val_dur=os.path.join(base_path, "metadata/maestro_real_durations.tsv"),
-        embeddings=os.path.join(base_path, "embeddings/beats/{}.hdf5"),
         pseudo_labels=os.path.join("resources", "pseudo-labels/{}.hdf5"),
         strong_tsv_exclude=os.path.join(base_path, "metadata/train/audioset_strong_exclude.tsv"),
         weak_tsv_exclude=os.path.join(base_path, "metadata/train/weak_exclude.tsv"),
@@ -356,7 +400,8 @@ def default_conf():
     ssl_loss_warmup_steps = 14_000
     include_maestro_ssl = True
 
-    atst_checkpoint = "atst_base.ckpt"
+    atst_checkpoint = "atst_as.ckpt"
+    beats_checkpoint = "beats_as.pt"
 
 
 add_configs(ex)  # add common configurations
@@ -513,7 +558,15 @@ class T4Module(L.LightningModule):
 
         if arch == "atst_frame":
             self.transformer_mel = scall(atst_mel)
-            transformer = ATSTWrapper(os.path.join(PRETRAINED_AUDIOSET, self.config['atst_checkpoint']))
+            transformer = ATSTWrapper(os.path.join(pretrained_models, self.config['atst_checkpoint']))
+            embed_dim = 768
+        elif arch == "passt":
+            self.transformer_mel = scall(passt_mel)
+            net = scall(passt_net)
+            embed_dim = net.num_features
+        elif arch == "beats":
+            net = BEATsWrapper(cfg_path=os.path.join(pretrained_models, self.config['beats_checkpoint']))
+            self.mel = net.preprocess
             embed_dim = 768
         else:
             raise ValueError(f"Unknown arch={arch}")
@@ -524,9 +577,9 @@ class T4Module(L.LightningModule):
         transformer.arch = arch
         if self.config.t4_wrapper.name == "Task4CRNNEmbeddingsWrapper":
             self.student = Task4CRNNEmbeddingsWrapper(transformer, audioset_classes=527,
-                                                      embedding_size=embed_dim, nclass=27,
-                                                      pretrained_name=self.config[arch]["pretrained_name"],
-                                                      model_init_mode="student")
+                                                     embedding_size=embed_dim, nclass=27,
+                                                     pretrained_name=self.config[arch]["pretrained_name"],
+                                                     model_init_mode="student")
         else:
             raise ValueError(f"Unknown head={self.config.head}")
 
@@ -536,8 +589,8 @@ class T4Module(L.LightningModule):
         transformer = deepcopy(transformer)
         if self.config.t4_wrapper.name == "Task4CRNNEmbeddingsWrapper":
             self.teacher = Task4CRNNEmbeddingsWrapper(transformer, audioset_classes=527,
-                                                      embedding_size=embed_dim, nclass=27,
-                                                      pretrained_name=self.config[arch]["pretrained_name"])
+                                                         embedding_size=embed_dim, nclass=27,
+                                                         pretrained_name=self.config[arch]["pretrained_name"])
         else:
             raise ValueError(f"Unknown head={self.config.head}")
         self.encoder = scall(many_hot_encoder)

@@ -296,7 +296,7 @@ def default_conf():
     filter_augment = dict(
         apply=1,
         p=0.8,
-        n_transform=2,
+        n_transform=1,
         filter_db_range=(-6, 6),
         filter_bands=(3, 6),
         filter_minimum_bandwidth=6
