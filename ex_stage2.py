@@ -37,7 +37,7 @@ from datasets.classes_dict import classes_labels_desed, classes_labels_maestro_r
     classes_labels_maestro_real_eval
 
 # config & logging
-from configs import add_configs, PRETRAINED_AUDIOSET, DATASET_PATH
+from configs import add_configs, PRETRAINED_MODELS, DATASET_PATH
 from helpers.utils import config_call, register_print_hooks
 from sacred import Experiment
 from sacred.config_helpers import CMD
@@ -670,7 +670,7 @@ class T4Module(L.LightningModule):
 
         if arch == "atst_frame":
             self.transformer_mel = scall(atst_mel)
-            transformer = ATSTWrapper(os.path.join(PRETRAINED_AUDIOSET, self.config['atst_checkpoint']))
+            transformer = ATSTWrapper(os.path.join(PRETRAINED_MODELS, self.config['atst_checkpoint']))
             embed_dim = 768
         else:
             raise ValueError(f"Unknown arch={arch}")

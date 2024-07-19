@@ -1,10 +1,8 @@
 import os
 
-PRETRAINED_AUDIOSET = "resources"
-PRETRAINED_S1 = "resources"
+PRETRAINED_MODELS = "resources/pretrained_models"
 DATASET_PATH = "/share/hel/datasets/dcase24_task4/dataset"
-DIRS_PATH = os.path.join("resources", "dirs")
-
+DIRS_PATH = "resources/dirs"
 
 def add_configs(ex):
     """

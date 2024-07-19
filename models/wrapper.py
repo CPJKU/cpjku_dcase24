@@ -6,7 +6,7 @@ import torchaudio
 
 from models.baseline.RNN import BidirectionalGRU
 from models.baseline.CNN import CNN
-from config_updates import pretrained_models
+from configs import PRETRAINED_MODELS
 
 
 first_RUN = True
@@ -35,7 +35,7 @@ class AudiosetWrapper(nn.Module):
             del self.att_linear_layer
 
     def load_model(self):
-        pretrained_weights = torch.load(os.path.join(pretrained_models, self.pretrained_name + ".ckpt"),
+        pretrained_weights = torch.load(os.path.join(PRETRAINED_MODELS, self.pretrained_name + ".ckpt"),
                                         map_location="cpu")["state_dict"]
         state_dict_keys = pretrained_weights.keys()
         # check wheter state_dict of dual model
@@ -137,7 +137,7 @@ class Task4RNNASStrongWrapper(nn.Module):
             del self.softmax_dense
 
     def load_model(self):
-        pretrained_weights = torch.load(os.path.join(pretrained_models, self.pretrained_name + ".ckpt"), map_location="cpu")["state_dict"]
+        pretrained_weights = torch.load(os.path.join(PRETRAINED_MODELS, self.pretrained_name + ".ckpt"), map_location="cpu")["state_dict"]
         pretrained_weights = {".".join(k.split(".")[1:]): v for k, v in pretrained_weights.items() if k.startswith("net_strong.")}
         if self.exclude_clf_head:
             pretrained_weights = {k: v for k, v in pretrained_weights.items() if not (k.startswith("sigmoid_dense") or k.startswith("softmax_dense"))}
@@ -279,7 +279,7 @@ class Task4CRNNEmbeddingsWrapper(nn.Module):
 
         if model_init_id:
             # for loading the full model including the wrapper (e.g., load S1 model for S2)
-            ckpt = os.path.join(pretrained_models, model_init_id + ".ckpt")
+            ckpt = os.path.join(PRETRAINED_MODELS, model_init_id + ".ckpt")
             if model_init_mode == "teacher":
                 print("Loaded teacher from ckpt: ", ckpt)
                 state_dict = torch.load(ckpt, map_location="cpu")["teacher"]

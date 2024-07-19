@@ -6,13 +6,12 @@ The setup is described in the paper [Multi-Iteration Multi-Stage Fine-Tuning of 
 
 The repository is currently **under construction** and will be cleaned for public use. It currently contains:
 * Datasets and Dataloading
-* ATST
+* ATST, fPaSST, BEATs
 * Stage 1 Training
 * Stage 2 Training
 * Pre-Trained Model Checkpoints
 
 We will further include:
-* fPaSST, BEATs
 * AudioSet strong pre-training
 * cSEBBs postprocessing
 
@@ -106,13 +105,22 @@ python download_resources.py
 
 Alternatively, you can just download the files you need and want to work with.
 
-## Example Command: Stage 1 Training w. ATST
+## Example Commands Stage 1:
 
+ATST:
 ```bash
-CUDA_VISIBLE_DEVICES=0 python -m ex_stage1 with arch=atst_frame loss_weights="(0.5, 0.25, 0.12, 0.1, 0.1, 1.5)" trainer.max_epochs=200 optimizer.crnn_lr=0.0005 filter_augment.apply=0 mix_augment.apply_mixstyle=0 ssl_no_class_mask=1 wandb.name=s1.i1,atst
+python -m ex_stage1 with arch=atst_frame loss_weights="(0.5, 0.25, 0.12, 0.1, 0.1, 1.5)" trainer.max_epochs=200 optimizer.crnn_lr=0.0005 filter_augment.apply=0 mix_augment.apply_mixstyle=0 ssl_no_class_mask=1 wandb.name=s1.i1,atst
 ```
 
+fPaSST:
+```bash
+python -m ex_stage1 with arch=fpasst loss_weights="(0.5, 0.25, 0.12, 0.1, 0.1, 1.5)" trainer.max_epochs=200 optimizer.crnn_lr=0.0005 filter_augment.apply=0 exclude_maestro_weak_ssl=1 t4_wrapper.embed_pool=int t4_wrapper.interpolation_mode=nearest-exact mix_augment.apply_mixstyle=0 passt_mel.fmax_aug_range=2000 wandb.name=s1.i1,pfasst
+```
 
+BEATs:
+```bash
+python -m ex_stage1 with arch=beats loss_weights="(0.5, 0.25, 0.08, 0.1, 0.1, 1.5)" trainer.max_epochs=200 optimizer.crnn_lr=0.0005 filter_augment.apply=0 t4_wrapper.no_wrapper=1 ssl_no_class_mask=1 trainer.accumulate_grad_batches=4 "training.batch_sizes=(3, 3, 3, 5, 5)" t4_wrapper.embed_pool=int t4_wrapper.interpolation_mode=nearest-exact wandb.name=s1.i1,beats
+```
 
 ## Example Command: Stage 2 Training w. ATST
 

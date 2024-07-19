@@ -26,7 +26,7 @@ import transformers
 
 # models
 from models.atst.atst_model_wrapper import ATSTWrapper, ATSTMel
-from models.fpasst import fpasst as passt
+from models.fpasst import fpasst
 from models.beats.BEATs_wrapper import BEATsWrapper
 from models import preprocess
 from models.wrapper import Task4CRNNEmbeddingsWrapper
@@ -40,7 +40,7 @@ from datasets.classes_dict import classes_labels_desed, classes_labels_maestro_r
     classes_labels_maestro_real_eval
 
 # config & logging
-from config_updates import add_configs, pretrained_models, dataset_path
+from configs import add_configs, PRETRAINED_MODELS, DATASET_PATH
 from helpers.utils import config_call, register_print_hooks
 from sacred import Experiment
 from sacred.config_helpers import CMD
@@ -138,7 +138,7 @@ atst_mel = ex.command(ATSTMel, prefix="atst_mel")
 
 ## fPaSST
 passt_mel = ex.command(preprocess.AugmentMelSTFT, prefix="passt_mel")
-passt_net = ex.command(passt.get_model, prefix="passt")
+passt_net = ex.command(fpasst.get_model, prefix="fpasst")
 
 ## crnn
 MelSpectrogram = ex.command(MelSpectrogram, prefix="mel")
@@ -212,7 +212,7 @@ def default_conf():
         periodic_window=True,
     )
 
-    passt = dict(
+    fpasst = dict(
         arch="passt_deit_bd_p16_384",
         n_classes=527,
         embed_dim=768,
@@ -287,7 +287,7 @@ def default_conf():
     val_thresholds = [0.5]
 
     # the following dict holds all the paths necessary to load all the different parts of the dataset
-    base_path = dataset_path
+    base_path = DATASET_PATH
     t4_paths = dict(
         synth_folder=os.path.join(base_path, "dcase_synth/audio/train/synthetic21_train/soundscapes_16k/"),
         synth_folder_44k=os.path.join(base_path, "dcase_synth/audio/train/synthetic21_train/soundscapes/"),
@@ -324,11 +324,9 @@ def default_conf():
         real_maestro_val_tsv=os.path.join(base_path, "metadata/maestro_real_validation.tsv"),
         real_maestro_val_dur=os.path.join(base_path, "metadata/maestro_real_durations.tsv"),
         pseudo_labels=os.path.join("resources", "pseudo-labels/{}.hdf5"),
-        strong_tsv_exclude=os.path.join(base_path, "metadata/train/audioset_strong_exclude.tsv"),
-        weak_tsv_exclude=os.path.join(base_path, "metadata/train/weak_exclude.tsv"),
-        unlabeled_tsv_exclude=os.path.join(base_path, "metadata/train/unlabeled_exclude.tsv"),
-        unlabeled_labels_csv=os.path.join(base_path,
-                                          "metadata/train/unlabeled_set_with_task4_class_names_full_mapping.csv"),
+        strong_tsv_exclude=os.path.join("resources/exclude", "audioset_strong_exclude.tsv"),
+        weak_tsv_exclude=os.path.join("resources/exclude", "weak_exclude.tsv"),
+        unlabeled_tsv_exclude=os.path.join("resources/exclude", "unlabeled_exclude.tsv")
     )
     median_window = [3, 9, 9, 5, 5, 5, 9, 7, 11, 9, 7, 3, 9, 13, 7, 1, 13, 3, 13, 7, 5, 5, 1, 13, 17, 13, 15]
     test_n_thresholds = 50
@@ -558,15 +556,15 @@ class T4Module(L.LightningModule):
 
         if arch == "atst_frame":
             self.transformer_mel = scall(atst_mel)
-            transformer = ATSTWrapper(os.path.join(pretrained_models, self.config['atst_checkpoint']))
+            transformer = ATSTWrapper(os.path.join(PRETRAINED_MODELS, self.config['atst_checkpoint']))
             embed_dim = 768
-        elif arch == "passt":
+        elif arch == "fpasst":
             self.transformer_mel = scall(passt_mel)
-            net = scall(passt_net)
-            embed_dim = net.num_features
+            transformer = scall(passt_net)
+            embed_dim = transformer.num_features
         elif arch == "beats":
-            net = BEATsWrapper(cfg_path=os.path.join(pretrained_models, self.config['beats_checkpoint']))
-            self.mel = net.preprocess
+            transformer = BEATsWrapper(cfg_path=os.path.join(PRETRAINED_MODELS, self.config['beats_checkpoint']))
+            self.transformer_mel = transformer.preprocess
             embed_dim = 768
         else:
             raise ValueError(f"Unknown arch={arch}")

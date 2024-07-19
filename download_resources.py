@@ -26,7 +26,7 @@ def download_zip(fname, subfolder=None):
         os.remove(target_file_zip)
 
 
-def download_ckpt(fname, subfolder=None):
+def download_file(fname, subfolder=None):
     if subfolder is not None:
         tgt_folder = os.path.join(target_folder, subfolder)
     else:
@@ -43,17 +43,26 @@ download_zip("pseudo-labels")
 # device impulse responses
 download_zip("dirs")
 
+os.makedirs(os.path.join(target_folder, "pretrained_models"), exist_ok=True)
+
 # external pre-trained checkpoint
-download_ckpt("atst_as.ckpt", subfolder="pretrained_models")
+download_file("atst_as.ckpt", subfolder="pretrained_models")
 
 # AudioSet strong pre-trained checkpoint
-download_ckpt("atst_as_strong.ckpt", subfolder="pretrained_models")
+download_file("atst_as_strong.ckpt", subfolder="pretrained_models")
 
 # Stage 1 pre-trained checkpoint
-download_ckpt("atst_stage1.ckpt", subfolder="pretrained_models")
+download_file("atst_stage1.ckpt", subfolder="pretrained_models")
 
 # external pre-trained checkpoint
-download_ckpt("beats_as.pt", subfolder="pretrained_models")
+download_file("beats_as.pt", subfolder="pretrained_models")
 
 # AudioSet strong pre-trained checkpoint
-download_ckpt("passt_as_strong.ckpt", subfolder="pretrained_models")
+download_file("passt_as_strong.ckpt", subfolder="pretrained_models")
+
+os.makedirs(os.path.join(target_folder, "exclude"), exist_ok=True)
+
+# for excluding overlapping files in data setup
+download_file("unlabeled_exclude.tsv", subfolder="exclude")
+download_file("weak_exclude.tsv", subfolder="exclude")
+download_file("audioset_strong_exclude.tsv", subfolder="exclude")
