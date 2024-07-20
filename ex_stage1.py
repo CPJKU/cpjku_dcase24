@@ -296,9 +296,9 @@ def default_conf():
         strong_folder_44k=os.path.join(base_path, "audio/train/strong_label_real/"),
         strong_tsv=os.path.join(base_path, "metadata/train/audioset_strong.tsv"),
         external_strong_folder=os.path.join(base_path, "audio/external_strong_16k/"),
-        external_strong_train_tsv=os.path.join(base_path, "metadata/external_audioset_strong_train.tsv"),
-        external_strong_val_tsv=os.path.join(base_path, "metadata/external_audioset_strong_eval.tsv"),
-        external_strong_dur=os.path.join(base_path, "metadata/external_audioset_strong_dur.tsv"),
+        external_strong_train_tsv="resources/external_strong_split/external_audioset_strong_train.tsv",
+        external_strong_val_tsv="resources/external_strong_split/external_audioset_strong_eval.tsv",
+        external_strong_dur="resources/external_strong_split/external_audioset_strong_dur.tsv",
         weak_folder=os.path.join(base_path, "audio/train/weak_16k/"),
         weak_folder_44k=os.path.join(base_path, "audio/train/weak/"),
         weak_tsv=os.path.join(base_path, "metadata/train/weak.tsv"),
@@ -555,16 +555,16 @@ class T4Module(L.LightningModule):
         )
 
         if arch == "atst_frame":
-            self.transformer_mel = scall(atst_mel)
+            self.mel = scall(atst_mel)
             transformer = ATSTWrapper(os.path.join(PRETRAINED_MODELS, self.config['atst_checkpoint']))
             embed_dim = 768
         elif arch == "fpasst":
-            self.transformer_mel = scall(passt_mel)
+            self.mel = scall(passt_mel)
             transformer = scall(passt_net)
             embed_dim = transformer.num_features
         elif arch == "beats":
             transformer = BEATsWrapper(cfg_path=os.path.join(PRETRAINED_MODELS, self.config['beats_checkpoint']))
-            self.transformer_mel = transformer.preprocess
+            self.mel = transformer.preprocess
             embed_dim = 768
         else:
             raise ValueError(f"Unknown arch={arch}")
@@ -741,13 +741,13 @@ class T4Module(L.LightningModule):
                 raise ValueError(f"Unknown gain target: {self.gain_target}")
 
         # set transformer mel in eval mode, as transformer is frozen in this stage
-        if hasattr(self.transformer_mel, 'eval') and callable(getattr(self.transformer_mel, 'eval')):
-            self.transformer_mel.eval()
+        if hasattr(self.mel, 'eval') and callable(getattr(self.mel, 'eval')):
+            self.mel.eval()
 
         with autocast(enabled=False, device_type='cuda'):
             audio = audio.float()
             sed_feats = self.crnn_mel(audio).unsqueeze(1)
-            pt_feats = self.transformer_mel(audio)
+            pt_feats = self.mel(audio)
 
         # deriving weak labels
         labels_weak = (torch.sum(labels[weak_mask], -1) > 0).float()
@@ -1054,7 +1054,7 @@ class T4Module(L.LightningModule):
         with autocast(enabled=False, device_type='cuda'):
             audio = audio.float()
             sed_feats = self.crnn_mel(audio).unsqueeze(1)
-            pt_feats = self.transformer_mel(audio)
+            pt_feats = self.mel(audio)
 
         bs = len(labels)
 
@@ -1488,7 +1488,7 @@ class T4Module(L.LightningModule):
         with autocast(enabled=False, device_type='cuda'):
             audio = audio.float()
             sed_feats = self.crnn_mel(audio).unsqueeze(1)
-            pt_feats = self.transformer_mel(audio)
+            pt_feats = self.mel(audio)
 
         bs = len(labels)
 

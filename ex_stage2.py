@@ -297,9 +297,9 @@ def default_conf():
         strong_folder_44k=os.path.join(base_path, "audio/train/strong_label_real/"),
         strong_tsv=os.path.join(base_path, "metadata/train/audioset_strong.tsv"),
         external_strong_folder=os.path.join(base_path, "audio/external_strong_16k/"),
-        external_strong_train_tsv=os.path.join(base_path, "metadata/external_audioset_strong_train.tsv"),
-        external_strong_val_tsv=os.path.join(base_path, "metadata/external_audioset_strong_eval.tsv"),
-        external_strong_dur=os.path.join(base_path, "metadata/external_audioset_strong_dur.tsv"),
+        external_strong_train_tsv="resources/external_strong_split/external_audioset_strong_train.tsv",
+        external_strong_val_tsv="resources/external_strong_split/external_audioset_strong_eval.tsv",
+        external_strong_dur="resources/external_strong_split/external_audioset_strong_dur.tsv",
         weak_folder=os.path.join(base_path, "audio/train/weak_16k/"),
         weak_folder_44k=os.path.join(base_path, "audio/train/weak/"),
         weak_tsv=os.path.join(base_path, "metadata/train/weak.tsv"),
@@ -327,7 +327,12 @@ def default_conf():
         pseudo_labels=os.path.join("resources", "pseudo-labels/{}.hdf5"),
         strong_tsv_exclude=os.path.join("resources/exclude", "audioset_strong_exclude.tsv"),
         weak_tsv_exclude=os.path.join("resources/exclude", "weak_exclude.tsv"),
-        unlabeled_tsv_exclude=os.path.join("resources/exclude", "unlabeled_exclude.tsv")
+        unlabeled_tsv_exclude=os.path.join("resources/exclude", "unlabeled_exclude.tsv"),
+        eval_public_folder=os.path.join(base_path, "eval/desed_public_eval/audio/eval/public_16k"),
+        eval_public_tsv=os.path.join(base_path, "eval/desed_public_eval/metadata/eval/public.tsv"),
+        eval_public_dur=os.path.join(base_path, "eval/desed_public_eval/metadata/eval/public_durations.tsv"),
+        eval_private_folder=os.path.join(base_path, "eval/eval24/audio_16k"),
+        eval_private_dur=os.path.join(base_path, "eval/eval24/eval24_durations.tsv")
     )
     median_window = [3, 9, 9, 5, 5, 5, 9, 7, 11, 9, 7, 3, 9, 13, 7, 1, 13, 3, 13, 7, 5, 5, 1, 13, 17, 13, 15]
     test_n_thresholds = 50
@@ -691,16 +696,16 @@ class T4Module(L.LightningModule):
         )
 
         if arch == "atst_frame":
-            self.transformer_mel = scall(atst_mel)
+            self.mel = scall(atst_mel)
             transformer = ATSTWrapper(os.path.join(PRETRAINED_MODELS, self.config['atst_checkpoint']))
             embed_dim = 768
         elif arch == "fpasst":
-            self.transformer_mel = scall(passt_mel)
+            self.mel = scall(passt_mel)
             transformer = scall(passt_net)
             embed_dim = transformer.num_features
         elif arch == "beats":
             transformer = BEATsWrapper(cfg_path=os.path.join(PRETRAINED_MODELS, self.config['beats_checkpoint']))
-            self.transformer_mel = transformer.preprocess
+            self.mel = transformer.preprocess
             embed_dim = 768
         else:
             raise ValueError(f"Unknown arch={arch}")
@@ -815,6 +820,22 @@ class T4Module(L.LightningModule):
         amp_to_db.amin = 1e-5  # amin= 1e-5 as in librosa
         return amp_to_db(mels).clamp(min=-50, max=80)  # clamp to reproduce old code
 
+    def forward_pseudo_labels(self, audio, mode="student"):
+        model = self.student if mode == "student" else self.teacher
+        with autocast(enabled=False, device_type='cuda'):
+            audio = audio.float()
+            sed_feats = self.crnn_mel(audio).unsqueeze(1)
+            pt_feats = self.mel(audio)
+
+        strong = model(
+            self.scaler(
+                self.take_log(sed_feats)
+            ),
+            pt_feats,
+            return_strong_logits=True
+        )
+        return strong
+
     def detect(self, mel_feats, transformer_feats, model, classes_mask=None):
         x = model(
             self.scaler(
@@ -879,7 +900,7 @@ class T4Module(L.LightningModule):
         with autocast(enabled=False, device_type='cuda'):
             audio = audio.float()
             sed_feats = self.crnn_mel(audio).unsqueeze(1)
-            pt_feats = self.transformer_mel(audio)
+            pt_feats = self.mel(audio)
 
         # deriving weak labels
         labels_weak = (torch.sum(labels[weak_mask], -1) > 0).float()
@@ -1298,7 +1319,7 @@ class T4Module(L.LightningModule):
         with autocast(enabled=False, device_type='cuda'):
             audio = audio.float()
             sed_feats = self.crnn_mel(audio).unsqueeze(1)
-            pt_feats = self.transformer_mel(audio)
+            pt_feats = self.mel(audio)
 
         bs = len(labels)
 
@@ -1732,7 +1753,7 @@ class T4Module(L.LightningModule):
         with autocast(enabled=False, device_type='cuda'):
             audio = audio.float()
             sed_feats = self.crnn_mel(audio).unsqueeze(1)
-            pt_feats = self.transformer_mel(audio)
+            pt_feats = self.mel(audio)
 
         bs = len(labels)
 
@@ -2269,6 +2290,455 @@ def main(
 
     return 0  # great success
 
+
+@ex.command
+def store_predictions(_run,
+                      _config,
+                      pretrained_name="atst_stage2",
+                      batch_size=128,
+                      model_path="resources/pretrained_models",
+                      output_path="resources/predictions",
+                      mode="student"):
+    assert mode in ["student", "teacher"]
+    os.makedirs(output_path, exist_ok=True)
+    model_file = os.path.join(model_path, pretrained_name + ".ckpt")
+    assert os.path.exists(model_file)
+    config = DefaultMunch.fromDict(_config)
+    module = T4Module(config)
+    state_dict = torch.load(model_file)["state_dict"]
+    module.load_state_dict(state_dict)
+    if mode == "teacher":
+        # append '_t' to the name for teacher
+        output_path = os.path.join(output_path, pretrained_name + "_t")
+    else:
+        output_path = os.path.join(output_path, pretrained_name)
+
+    synth_set = t4_24_datasets.WavDataset(
+        config["t4_paths"]["synth_folder"]
+    )
+
+    strong_set = t4_24_datasets.WavDataset(
+        config["t4_paths"]["strong_folder"]
+    )
+
+    external_strong_set = t4_24_datasets.WavDataset(
+        config["t4_paths"]["external_strong_folder"]
+    )
+
+    weak_set = t4_24_datasets.WavDataset(
+        config["t4_paths"]["weak_folder"]
+    )
+
+    unlabeled_set = t4_24_datasets.WavDataset(
+        config["t4_paths"]["unlabeled_folder"]
+    )
+
+    synth_val = t4_24_datasets.WavDataset(
+        config["t4_paths"]["synth_val_folder"]
+    )
+
+    weak_val = t4_24_datasets.WavDataset(
+        config["t4_paths"]["weak_folder"]
+    )
+
+    devtest_dataset = t4_24_datasets.WavDataset(
+        config["t4_paths"]["test_folder"]
+    )
+
+    # now extract features for MAESTRO too
+    maestro_real_dev = t4_24_datasets.WavDataset(
+        config["t4_paths"]["real_maestro_val_folder"]
+    )
+
+    maestro_real_train = t4_24_datasets.WavDataset(
+        config["t4_paths"]["real_maestro_train_folder"]
+    )
+
+    # public eval set
+    eval_public = t4_24_datasets.WavDataset(
+        config["t4_paths"]["eval_public_folder"]
+    )
+
+    # private set
+    eval_private = t4_24_datasets.WavDataset(
+        config["t4_paths"]["eval_private_folder"]
+    )
+
+    module.eval()
+
+    for k, elem in {
+        "synth_train": synth_set,
+        "weak_train": weak_set,
+        "strong_train": strong_set,
+        "external_strong_train": external_strong_set,
+        "unlabeled_train": unlabeled_set,
+        "synth_val": synth_val,
+        "weak_val": weak_val,
+        "devtest": devtest_dataset,
+        "maestro_real_dev": maestro_real_dev,
+        "maestro_real_train": maestro_real_train,
+        "eval_public": eval_public,
+        "eval_private": eval_private
+    }.items():
+        extract(batch_size, output_path, k, elem, module, mode)
+
+
+def extract(batch_size, folder, dset_name, torch_dset, model, mode):
+    import h5py
+    from tqdm import tqdm
+    Path(folder).mkdir(parents=True, exist_ok=True)
+    file = os.path.join(folder, "{}.hdf5".format(dset_name))
+    if os.path.exists(file):
+        print(f"Dataset {dset_name} already exists.")
+        return
+    f = h5py.File(file, "w")
+    strong_logits = f.create_dataset(
+        "strong_logits", (len(torch_dset), 156, 27), dtype=np.float32
+    )
+    filenames_preds = f.create_dataset(
+        "filenames", data=["example_00.wav"] * len(torch_dset)
+    )
+
+    dloader = torch.utils.data.DataLoader(
+        torch_dset, batch_size=batch_size, drop_last=False
+    )
+    global_indx = 0
+    model.cuda()
+    for i, batch in enumerate(tqdm(dloader)):
+        feats, filenames = batch
+        feats = feats.to(model.device)
+
+        with torch.inference_mode():
+            strong_preds = model.forward_pseudo_labels(feats, mode=mode)
+
+        # enumerate, convert to numpy and write to h5py
+        bsz = feats.shape[0]
+        for b_indx in range(bsz):
+            strong_logits[global_indx] = strong_preds[b_indx].detach().cpu().numpy()
+            filenames_preds[global_indx] = filenames[b_indx]
+            global_indx += 1
+
+
+@ex.command
+def ensemble_predictions(_run,
+                         _config,
+                         pretrained_names=("atst_stage2", "passt_stage2", "beats_stage2"),
+                         preds_path="resources/predictions",
+                         out_name=None):
+    import h5py
+    assert len(pretrained_names) > 1
+
+    if out_name:
+        output_path = os.path.join(preds_path, out_name)
+    else:
+        output_path = os.path.join(preds_path, "_".join(pretrained_names))
+
+    Path(output_path).mkdir(parents=True, exist_ok=True)
+
+    for dset_name in (
+            "synth_train",
+            "weak_train",
+            "strong_train",
+            "external_strong_train",
+            "unlabeled_train",
+            "synth_val",
+            "weak_val",
+            "devtest",
+            "maestro_real_dev",
+            "maestro_real_train",
+            "eval_public",
+            "eval_private"
+    ):
+        ensemble_h5py_path = os.path.join(output_path, "{}.hdf5".format(dset_name))
+        if os.path.exists(ensemble_h5py_path):
+            print(f"Ensemble predictions for {dset_name} already exist!")
+            continue
+
+        single_h5pys = [os.path.join(preds_path, name, "{}.hdf5".format(dset_name)) for
+                        name in pretrained_names]
+
+        all_filenames = None
+        all_strong_logits = []
+
+        # Read filenames and strong_logits from each h5py file
+        for h5py_file in single_h5pys:
+            with h5py.File(h5py_file, 'r') as file:
+                filenames = file['filenames'][:]
+                strong_logits = file['strong_logits'][:]
+                if all_filenames is None:
+                    all_filenames = filenames
+                else:
+                    # Ensure that filenames are the same across all files
+                    if not np.array_equal(all_filenames, filenames):
+                        raise ValueError("Filenames differ across HDF5 files")
+
+                all_strong_logits.append(strong_logits)
+
+        # Convert the list of strong_logits to a numpy array for averaging
+        all_strong_logits = np.array(all_strong_logits)
+
+        # Compute the average of strong_logits across all files
+        avg_strong_logits = np.mean(all_strong_logits, axis=0)
+
+        # Create a new HDF5 file and store the filenames and averaged strong_logits
+        with h5py.File(ensemble_h5py_path, 'w') as ensemble_file:
+            ensemble_file.create_dataset('filenames', data=all_filenames)
+            ensemble_file.create_dataset('strong_logits', data=avg_strong_logits)
+
+
+@ex.command
+def eval_predictions(_run,
+                     _config,
+                     pretrained_name="atst_stage2",
+                     preds_path="resources/predictions",
+                     classwise=True,
+                     step_filter_lengths=(0.38, 0.42, 0.46, 0.50, 0.54, 0.58, 0.62, 0.66),
+                     merge_thresholds_rel=(1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0, 3.25),
+                     merge_thresholds_abs=(0.15, 0.175, 0.2, 0.225, 0.25, 0.275, 0.3, 0.325)
+                           ):
+    import h5py
+    config = DefaultMunch.fromDict(_config)
+    module = T4Module(config)
+    preds_path = os.path.join(preds_path, pretrained_name)
+    assert os.path.exists(preds_path)
+
+    # validation set for csbbes tuning
+    devtest_hdf5 = h5py.File(os.path.join(preds_path, "devtest.hdf5"))
+    maestro_real_dev_hdf5 = h5py.File(os.path.join(preds_path, "maestro_real_dev.hdf5"))
+
+    # test
+    eval_public_hdf5 = h5py.File(os.path.join(preds_path, "eval_public.hdf5"))
+    eval_private_hdf5 = h5py.File(os.path.join(preds_path, "eval_private.hdf5"))
+
+    # keys
+    desed_keys = sorted(classes_labels_desed.keys())
+    maestro_keys = list(classes_labels_maestro_real.keys())
+
+    devtest = hdf5_to_dataframes(devtest_hdf5, module.encoder)
+
+    # learn csebbs predictor from test set
+    desed_ground_truth = sed_scores_eval.io.read_ground_truth_events(
+        config.t4_paths["test_tsv"]
+    )
+    desed_audio_durations = sed_scores_eval.io.read_audio_durations(
+        config.t4_paths["test_dur"]
+    )
+
+    # drop audios without events
+    desed_ground_truth = {
+        audio_id: gt for audio_id, gt in desed_ground_truth.items() if len(gt) > 0
+    }
+    desed_audio_durations = {
+        audio_id: desed_audio_durations[audio_id]
+        for audio_id in desed_ground_truth.keys()
+    }
+
+    devtest_filtered = {
+        clip_id: devtest[clip_id][['onset', 'offset'] + desed_keys]
+        for clip_id in desed_ground_truth.keys()
+    }
+
+    from sebbs import csebbs
+
+    # learn csebbs predictor from test set
+    csebbs_predictor_unprocessed, _ = csebbs.tune(
+       scores=devtest_filtered,
+       ground_truth=desed_ground_truth,
+       audio_durations=desed_audio_durations,
+       step_filter_lengths=step_filter_lengths,
+       merge_thresholds_rel=merge_thresholds_rel,
+       merge_thresholds_abs=merge_thresholds_abs,
+       selection_fn=csebbs.select_best_psds,
+       dtc_threshold=.7, gtc_threshold=.7,
+       cttc_threshold=None, alpha_ct=0.,
+       classwise=classwise
+    )
+
+    maestro_real_dev = hdf5_to_dataframes(maestro_real_dev_hdf5, module.encoder)
+    eval_private = hdf5_to_dataframes(eval_private_hdf5, module.encoder)
+    eval_public = hdf5_to_dataframes(eval_public_hdf5, module.encoder)
+
+    # test the predictor on dev and eval
+    eval_public_gt = sed_scores_eval.io.read_ground_truth_events(
+        config.t4_paths["eval_public_tsv"]
+    )
+    eval_public_dur = sed_scores_eval.io.read_audio_durations(
+        config.t4_paths["eval_public_dur"]
+    )
+    # drop audios without events
+    eval_public_gt = {
+        audio_id: gt for audio_id, gt in eval_public_gt.items() if len(gt) > 0
+    }
+    eval_public_dur = {
+        audio_id: eval_public_dur[audio_id]
+        for audio_id in eval_public_gt.keys()
+    }
+
+    eval_private_dur = sed_scores_eval.io.read_audio_durations(
+        config.t4_paths["eval_private_dur"]
+    )
+
+    maestro_audio_durations = sed_scores_eval.io.read_audio_durations(config.t4_paths["real_maestro_val_dur"])
+    maestro_ground_truth_clips = pd.read_csv(config.t4_paths["real_maestro_val_tsv"], sep="\t")
+    maestro_ground_truth_clips = maestro_ground_truth_clips[maestro_ground_truth_clips.confidence > .5]
+    maestro_ground_truth_clips = maestro_ground_truth_clips[maestro_ground_truth_clips.event_label.isin(classes_labels_maestro_real_eval)]
+    maestro_ground_truth_clips = sed_scores_eval.io.read_ground_truth_events(maestro_ground_truth_clips)
+
+    maestro_ground_truth = _merge_maestro_ground_truth(maestro_ground_truth_clips)
+    maestro_audio_durations = {file_id: maestro_audio_durations[file_id] for file_id in maestro_ground_truth.keys()}
+
+    for dsname, (scores, duration, ground_truth) in {
+        "maestro_real_dev": (maestro_real_dev, maestro_audio_durations, maestro_ground_truth),
+        "devtest": (devtest, desed_audio_durations, desed_ground_truth),
+        "eval_public": (eval_public, eval_public_dur, eval_public_gt),
+        "eval_private": (eval_private, eval_private_dur, None)
+
+    }.items():
+        scores_csebbs = _get_csebb_sed_scores(
+            scores,
+            csebbs_predictor_unprocessed,
+            ['onset', 'offset'] + desed_keys,
+            ['onset', 'offset'] + maestro_keys
+        )
+
+        if dsname == "eval_private":
+            print(f"Storing predictions to {preds_path}.")
+            out_path_processed = os.path.join(preds_path, 'Schmid_CPJKU_task4_X_runX.output')
+            out_path_unprocessed = os.path.join(preds_path, 'Schmid_CPJKU_task4_X_runX_unprocessed.output')
+
+            from pathlib import Path
+            Path(out_path_processed).mkdir(parents=True, exist_ok=True)
+            Path(out_path_unprocessed).mkdir(parents=True, exist_ok=True)
+            for filename in scores:
+                scores[filename].to_csv(os.path.join(out_path_unprocessed, str(Path(filename).stem) + '.tsv'), sep="\t", index=False)
+                scores_csebbs[filename].replace([-np.inf], 0.0, inplace=True)
+                scores_csebbs[filename].to_csv(os.path.join(out_path_processed, str(Path(filename).stem) + '.tsv'), sep="\t", index=False)
+        elif dsname in ["devtest", "eval_public"]:
+            keys = ['onset', 'offset'] + sorted(classes_labels_desed.keys())
+            scores = {clip_id: scores[clip_id][keys] for clip_id in ground_truth.keys()}
+            psds1_csebbs_unprocessed = compute_psds_from_scores(
+                scores,
+                ground_truth,
+                duration,
+                dtc_threshold=0.7,
+                gtc_threshold=0.7,
+                cttc_threshold=None,
+                alpha_ct=0,
+                alpha_st=1,
+            )
+            print(dsname, "psds1:", psds1_csebbs_unprocessed)
+
+            scores_csebbs = {clip_id: scores_csebbs[clip_id][keys] for clip_id in ground_truth.keys()}
+            psds1_csebbs_processed = compute_psds_from_scores(
+                scores_csebbs,
+                ground_truth,
+                duration,
+                dtc_threshold=0.7,
+                gtc_threshold=0.7,
+                cttc_threshold=None,
+                alpha_ct=0,
+                alpha_st=1,
+            )
+            print(dsname, "psds1_csebbs:", psds1_csebbs_processed)
+        elif dsname in ["maestro_real_dev"]:
+            keys = ['onset', 'offset'] + sorted(classes_labels_maestro_real_eval)
+
+            scores = _get_segment_scores_and_overlap_add(
+                frame_scores=scores,
+                audio_durations=duration,
+                event_classes=sorted(classes_labels_maestro_real_eval),
+                segment_length=1.0,
+            )
+            scores = {clip_id: scores[clip_id][keys] for clip_id in ground_truth}
+
+            segment_mpauc_csebbs_unprocessed = sed_scores_eval.segment_based.auroc(
+                scores, ground_truth, duration,
+                segment_length=1.0, max_fpr=.1,
+            )[0]['mean']
+            print(dsname, "mpAUC:", segment_mpauc_csebbs_unprocessed)
+
+            scores_csebbs = _get_segment_scores_and_overlap_add(
+                frame_scores=scores_csebbs,
+                audio_durations=duration,
+                event_classes=sorted(classes_labels_maestro_real_eval),
+                segment_length=1.0,
+            )
+            scores_csebbs = {clip_id: scores_csebbs[clip_id][keys] for clip_id in ground_truth}
+
+            segment_mpauc_csebbs_processed = sed_scores_eval.segment_based.auroc(
+                scores_csebbs, ground_truth, duration,
+                segment_length=1.0, max_fpr=.1,
+            )[0]['mean']
+            print(dsname, "mpAUC_csebbs (should be the same):", segment_mpauc_csebbs_processed)
+
+
+def hdf5_to_dataframes(hdf4py, encoder=None):
+    print("Converting:", hdf4py.filename)
+
+    # load content of hdf5 files
+    filenames = [f.decode("UTF-8") for f in hdf4py['filenames']]
+    strong_preds = torch.from_numpy(np.array(hdf4py['strong_logits']))
+
+    print("Examples to convert", len(filenames))
+
+    # convert logits to probabilities
+    strong_preds_student = torch.sigmoid(strong_preds).transpose(1, 2)
+
+    # convert to dfs
+    buffer = {}
+
+    (
+        scores_unprocessed_student_strong,
+        scores_processed_student_strong,
+        _,
+    ) = batched_decode_preds(
+        strong_preds_student,
+        [fn + '.wav' for fn in filenames],
+        encoder,
+        thresholds=[0.5],
+    )
+
+    buffer.update(scores_unprocessed_student_strong)
+    return buffer
+
+
+def _get_csebb_sed_scores(all_scores, csebbs_predictor, desed_keys, maestro_keys, audio_duration=None):
+    from sebbs.utils import sed_scores_from_sebbs
+
+    scores_desed_classes = {clip_id: all_scores[clip_id][desed_keys] for clip_id in all_scores.keys()}
+    csebbs_desed_classes = csebbs_predictor.predict(scores_desed_classes)
+
+    # now compute csebbs scores for maestro classes
+    scores_maestro_classes = {clip_id: all_scores[clip_id][maestro_keys] for clip_id in all_scores.keys()}
+    segment_scores_maestro_classes = {
+        clip_id: _get_segment_scores(
+            clip_scores,
+            clip_length=list(clip_scores["offset"])[-1],
+            segment_length=1.0,
+        )
+        for clip_id, clip_scores in scores_maestro_classes.items()
+    }
+
+    # combine desed and maestro sebbs
+    desed_classes = sorted(classes_labels_desed.keys())
+    maestro_classes = list(classes_labels_maestro_real.keys())
+    sebbs_all = {
+        clip_id: sorted(
+            csebbs_desed_classes[clip_id]
+            + [
+                (float(onset), float(offset), class_name, float(seg_score))
+                for onset, offset, scores_vec in zip(
+                    segment_scores_maestro_classes[clip_id]["onset"],
+                    segment_scores_maestro_classes[clip_id]["offset"],
+                    segment_scores_maestro_classes[clip_id][maestro_classes].to_numpy(),
+                )
+                for class_name, seg_score in zip(maestro_classes, scores_vec)
+            ]
+        )
+        for clip_id in all_scores
+    }
+
+    return sed_scores_from_sebbs(sebbs_all, sound_classes=desed_classes + maestro_classes, fill_value=0.0, audio_duration=audio_duration)
 
 
 # this is the program's entry point

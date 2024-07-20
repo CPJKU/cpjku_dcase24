@@ -38,19 +38,8 @@ class AudiosetWrapper(nn.Module):
         pretrained_weights = torch.load(os.path.join(PRETRAINED_MODELS, self.pretrained_name + ".ckpt"),
                                         map_location="cpu")["state_dict"]
         state_dict_keys = pretrained_weights.keys()
-        # check wheter state_dict of dual model
-        is_dual_model = any([k.startswith('fpasst') for k in state_dict_keys]) and \
-                        any([k.startswith('frame_dymn') for k in state_dict_keys])
         is_strong_pretrained = any([k.startswith('net_strong') for k in state_dict_keys])
-        if is_dual_model:
-            is_dymn = list(self.model.state_dict().keys())[-1].startswith('out_c')
-            if is_dymn:
-                pretrained_weights = {k[len("frame_dymn."):]: v for k, v in pretrained_weights.items() if k.startswith("frame_dymn.")}
-            else:
-                pretrained_weights = {k[len("fpasst."):]: v for k, v in pretrained_weights.items() if
-                                      k.startswith("fpasst.")}
-            self.load_state_dict(pretrained_weights)
-        elif is_strong_pretrained:
+        if is_strong_pretrained:
             is_atst = any([".atst." in k for k in state_dict_keys])
             if is_atst:
                 pretrained_weights = {"model." + ".".join(k.split(".")[2:]): v for k, v in pretrained_weights.items() if
@@ -184,14 +173,10 @@ class Task4CRNNEmbeddingsWrapper(nn.Module):
                  stride=[1, 1, 1, 1, 1, 1, 1],
                  nb_filters=[16, 32, 64, 128, 128, 128, 128],
                  pooling=[[2, 2], [2, 2], [1, 2], [1, 2], [1, 2], [1, 2], [1, 2]],
-                 ablate_embedding=False,
-                 ablate_cnn=False,
                  embed_pool="aap",
                  interpolation_mode="nearest"
                  ):
         super(Task4CRNNEmbeddingsWrapper, self).__init__()
-        self.ablate_embedding = ablate_embedding
-        self.ablate_cnn = ablate_cnn
         self.dropstep_recurrent = dropstep_recurrent
         self.dropstep_recurrent_len = dropstep_recurrent_len
         self.n_in_channel = n_in_channel
@@ -290,8 +275,7 @@ class Task4CRNNEmbeddingsWrapper(nn.Module):
 
         self.first = True
 
-    def forward(self, x, pretrain_x, pad_mask=None, classes_mask=(None,),
-                return_strong_logits=False, return_strong_weak_logits=False):
+    def forward(self, x, pretrain_x, pad_mask=None, classes_mask=(None,), return_strong_logits=False):
         # conv features
         if self.first:
             print("CNN input:", x.size())

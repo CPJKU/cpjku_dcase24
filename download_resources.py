@@ -72,3 +72,10 @@ os.makedirs(os.path.join(target_folder, "exclude"), exist_ok=True)
 download_file("unlabeled_exclude.tsv", subfolder="exclude")
 download_file("weak_exclude.tsv", subfolder="exclude")
 download_file("audioset_strong_exclude.tsv", subfolder="exclude")
+
+os.makedirs(os.path.join(target_folder, "external_strong_split"), exist_ok=True)
+
+# for the external strong split we used
+download_file("external_audioset_strong_train.tsv", subfolder="external_strong_split")
+download_file("external_audioset_strong_eval.tsv", subfolder="external_strong_split")
+download_file("external_audioset_strong_dur.tsv", subfolder="external_strong_split")

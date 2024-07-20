@@ -15,3 +15,4 @@ psds_eval>=0.4.0
 sed_eval>=0.2.1
 sed_scores_eval==0.0.3
 codecarbon==2.3.4
+git+https://github.com/merlresearch/sebbs.git
