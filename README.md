@@ -109,21 +109,33 @@ Alternatively, you can just download the files you need and want to work with.
 
 ATST:
 ```bash
-python -m ex_stage1 with arch=atst_frame loss_weights="(0.5, 0.25, 0.12, 0.1, 0.1, 1.5)" trainer.max_epochs=200 optimizer.crnn_lr=0.0005 filter_augment.apply=0 mix_augment.apply_mixstyle=0 ssl_no_class_mask=1 wandb.name=s1.i1,atst
+python -m ex_stage1 with arch=atst_frame loss_weights="(0.5, 0.25, 0.12, 0.1, 0.1, 1.5)" trainer.max_epochs=200 optimizer.crnn_lr=0.0005 filter_augment.apply=0 mix_augment.apply_mixstyle=0 ssl_no_class_mask=1 wandb.name=s1.i2,atst
 ```
 
 fPaSST:
 ```bash
-python -m ex_stage1 with arch=fpasst loss_weights="(0.5, 0.25, 0.12, 0.1, 0.1, 1.5)" trainer.max_epochs=200 optimizer.crnn_lr=0.0005 filter_augment.apply=0 exclude_maestro_weak_ssl=1 t4_wrapper.embed_pool=int t4_wrapper.interpolation_mode=nearest-exact mix_augment.apply_mixstyle=0 passt_mel.fmax_aug_range=2000 wandb.name=s1.i1,pfasst
+python -m ex_stage1 with arch=fpasst loss_weights="(0.5, 0.25, 0.12, 0.1, 0.1, 1.5)" trainer.max_epochs=200 optimizer.crnn_lr=0.0005 filter_augment.apply=0 exclude_maestro_weak_ssl=1 t4_wrapper.embed_pool=int t4_wrapper.interpolation_mode=nearest-exact mix_augment.apply_mixstyle=0 passt_mel.fmax_aug_range=2000 wandb.name=s1.i2,pfasst
 ```
 
 BEATs:
 ```bash
-python -m ex_stage1 with arch=beats loss_weights="(0.5, 0.25, 0.08, 0.1, 0.1, 1.5)" trainer.max_epochs=200 optimizer.crnn_lr=0.0005 filter_augment.apply=0 t4_wrapper.no_wrapper=1 ssl_no_class_mask=1 trainer.accumulate_grad_batches=4 "training.batch_sizes=(3, 3, 3, 5, 5)" t4_wrapper.embed_pool=int t4_wrapper.interpolation_mode=nearest-exact wandb.name=s1.i1,beats
+python -m ex_stage1 with arch=beats loss_weights="(0.5, 0.25, 0.08, 0.1, 0.1, 1.5)" trainer.max_epochs=200 optimizer.crnn_lr=0.0005 filter_augment.apply=0 t4_wrapper.no_wrapper=1 ssl_no_class_mask=1 trainer.accumulate_grad_batches=4 "training.batch_sizes=(3, 3, 3, 5, 5)" t4_wrapper.embed_pool=int t4_wrapper.interpolation_mode=nearest-exact wandb.name=s1.i2,beats
 ```
 
-## Example Command: Stage 2 Training w. ATST
+## Example Command Stage 2 
+
+ATST:
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 python -m ex_stage2 with arch=atst_frame trainer.accumulate_grad_batches=8 loss_weights="(12, 3, 0.25, 1, 60, 0)" t4_wrapper.model_init_id=atst_stage1 optimizer.pt_lr_scale=0.5 optimizer.cnn_lr=1e-5 optimizer.rnn_lr=1e-4 freq_warp.include_maestro=1 optimizer.adamw=1 optimizer.weight_decay=1e-3 wandb.name=s2.i1,atst
+python -m ex_stage2 with arch=atst_frame trainer.accumulate_grad_batches=8 loss_weights="(12, 3, 0.25, 1, 60, 0)" t4_wrapper.model_init_id=atst_stage1 optimizer.pt_lr_scale=0.5 optimizer.cnn_lr=1e-5 optimizer.rnn_lr=1e-4 freq_warp.include_maestro=1 optimizer.adamw=1 optimizer.weight_decay=1e-3 wandb.name=s2.i2,atst
+```
+fPaSST:
+
+```bash
+python -m ex_stage2 with arch=fpasst trainer.accumulate_grad_batches=8 loss_weights="(12, 3, 0.25, 1, 60, 0)" t4_wrapper.model_init_id=passt_stage1 freq_warp.apply=0 optimizer.adamw=1 optimizer.weight_decay=1e-3 passt_mel.fmin_aug_range=1 passt_mel.fmax_aug_range=2000 optimizer.cnn_lr=5e-5 optimizer.rnn_lr=5e-4 exclude_maestro_weak_ssl=1 t4_wrapper.embed_pool=int t4_wrapper.interpolation_mode=nearest-exact wandb.name=s2.i1,passt
+```
+
+BEATs:
+```bash
+python -m ex_stage2 with arch=beats loss_weights="(12, 3, 0.25, 1, 60, 0)" trainer.accumulate_grad_batches=36 "training.batch_sizes=(3, 2, 2, 3, 3)" t4_wrapper.model_init_id=beats_stage1 freq_warp.include_maestro=1 optimizer.adamw=1 optimizer.weight_decay=1e-3 t4_wrapper.no_wrapper=1 optimizer.cnn_lr=5e-5 optimizer.rnn_lr=5e-4 t4_wrapper.embed_pool=int t4_wrapper.interpolation_mode=nearest-exact exclude_maestro_weak_ssl=1 wandb.name=s2.i1,beats
 ```

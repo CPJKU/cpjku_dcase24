@@ -26,6 +26,9 @@ import transformers
 
 # models
 from models.atst.atst_model_wrapper import ATSTWrapper, ATSTMel
+from models.fpasst import fpasst
+from models.beats.BEATs_wrapper import BEATsWrapper
+from models import preprocess
 from models.wrapper import Task4CRNNEmbeddingsWrapper
 from helpers.encoder import get_encoder
 
@@ -133,6 +136,10 @@ many_hot_encoder = ex.command(get_encoder, prefix="encoder")
 ## atst
 atst_mel = ex.command(ATSTMel, prefix="atst_mel")
 
+## fPaSST
+passt_mel = ex.command(preprocess.AugmentMelSTFT, prefix="passt_mel")
+passt_net = ex.command(fpasst.get_model, prefix="fpasst")
+
 ## crnn
 MelSpectrogram = ex.command(MelSpectrogram, prefix="mel")
 Task4CRNNEmbeddingsWrapper = ex.command(Task4CRNNEmbeddingsWrapper, prefix="t4_wrapper")
@@ -184,6 +191,38 @@ def default_conf():
         power=1,
     )
 
+    passt_mel = dict(
+        n_mels=128,
+        sr=16_000,
+        win_length=400,
+        hopsize=160,
+        n_fft=512,
+        freqm=0,
+        timem=0,
+        htk=False,
+        fmin=0.0,
+        fmax=None,
+        norm=1,
+        fmin_aug_range=10,
+        fmax_aug_range=1000,
+        fast_norm=True,
+        preamp=True,
+        trainable=False,
+        padding="center",
+        periodic_window=True,
+    )
+
+    fpasst = dict(
+        arch="passt_deit_bd_p16_384",
+        n_classes=527,
+        embed_dim=768,
+        sample_rate=16_000,
+        pos_embed_length=250,
+        frame_patchout=0,
+        in_channels=16,
+        pretrained_name="passt_as_strong"
+    )
+
     encoder = dict(
         audio_len=10,
         frame_len=2048,
@@ -219,6 +258,10 @@ def default_conf():
         embedding_type="frame",
         aggregation_type="pool1d",
         model_init_id=None
+    )
+
+    beats = dict(
+        pretrained_name=None
     )
 
     training = dict(sample_rate=sample_rate,
@@ -281,13 +324,10 @@ def default_conf():
         real_maestro_val_folder_44k=os.path.join(base_path, "audio/maestro_real_validation"),
         real_maestro_val_tsv=os.path.join(base_path, "metadata/maestro_real_validation.tsv"),
         real_maestro_val_dur=os.path.join(base_path, "metadata/maestro_real_durations.tsv"),
-        embeddings=os.path.join(base_path, "embeddings/beats/{}.hdf5"),
         pseudo_labels=os.path.join("resources", "pseudo-labels/{}.hdf5"),
-        strong_tsv_exclude=os.path.join(base_path, "metadata/train/audioset_strong_exclude.tsv"),
-        weak_tsv_exclude=os.path.join(base_path, "metadata/train/weak_exclude.tsv"),
-        unlabeled_tsv_exclude=os.path.join(base_path, "metadata/train/unlabeled_exclude.tsv"),
-        unlabeled_labels_csv=os.path.join(base_path,
-                                          "metadata/train/unlabeled_set_with_task4_class_names_full_mapping.csv"),
+        strong_tsv_exclude=os.path.join("resources/exclude", "audioset_strong_exclude.tsv"),
+        weak_tsv_exclude=os.path.join("resources/exclude", "weak_exclude.tsv"),
+        unlabeled_tsv_exclude=os.path.join("resources/exclude", "unlabeled_exclude.tsv")
     )
     median_window = [3, 9, 9, 5, 5, 5, 9, 7, 11, 9, 7, 3, 9, 13, 7, 1, 13, 3, 13, 7, 5, 5, 1, 13, 17, 13, 15]
     test_n_thresholds = 50
@@ -365,7 +405,8 @@ def default_conf():
     exclude_maestro_weak_ssl = False
     use_ict_loss = True
 
-    atst_checkpoint = "atst_base.ckpt"
+    atst_checkpoint = "atst_as.ckpt"
+    beats_checkpoint = "beats_as.pt"
 
 
 add_configs(ex)  # add common configurations
@@ -433,9 +474,7 @@ def get_scaler(statistic="instance", normtype="minmax", dims=(2, 3)):
 def separate_params(model, arch):
     cnn_params = []
     rnn_params = []
-    if arch == "frame_dymn":
-        pt_params = [[], [], [], [], [], [], []]
-    elif arch == "passt":
+    if arch == "fpasst":
         pt_params = [[], [], [], [], [], [], [], [], [], [], [], [], [], []]
     elif arch == "atst_frame":
         pt_params = [[], [], [], [], [], [], [], [], [], [], [], [], [], []]
@@ -451,24 +490,7 @@ def separate_params(model, arch):
                 cnn_params.append(p)
             else:
                 rnn_params.append(p)
-        elif arch == "frame_dymn":
-            if 'in_c' in k:
-                pt_params[0].append(p)
-            elif 'out_c' in k or 'head' in k:
-                pt_params[-1].append(p)
-            elif 'layers.0' in k or 'layers.1' in k or 'layers.2' in k:
-                pt_params[1].append(p)
-            elif 'layers.3' in k or 'layers.4' in k or 'layers.5' in k:
-                pt_params[2].append(p)
-            elif 'layers.6' in k or 'layers.7' in k or 'layers.8' in k:
-                pt_params[3].append(p)
-            elif 'layers.9' in k or 'layers.10' in k or 'layers.11' in k:
-                pt_params[4].append(p)
-            elif 'layers.12' in k or 'layers.13' in k or 'layers.14' in k:
-                pt_params[5].append(p)
-            else:
-                ValueError("Check layer-wise learning for frame-dymn!")
-        elif arch == "passt":
+        elif arch == "fpasst":
             if 'conv_in' in k or 'pos_embed' in k or 'token' in k or 'patch_embed' in k:
                 pt_params[0].append(p)
             elif 'blocks.0' in k:
@@ -671,6 +693,14 @@ class T4Module(L.LightningModule):
         if arch == "atst_frame":
             self.transformer_mel = scall(atst_mel)
             transformer = ATSTWrapper(os.path.join(PRETRAINED_MODELS, self.config['atst_checkpoint']))
+            embed_dim = 768
+        elif arch == "fpasst":
+            self.transformer_mel = scall(passt_mel)
+            transformer = scall(passt_net)
+            embed_dim = transformer.num_features
+        elif arch == "beats":
+            transformer = BEATsWrapper(cfg_path=os.path.join(PRETRAINED_MODELS, self.config['beats_checkpoint']))
+            self.transformer_mel = transformer.preprocess
             embed_dim = 768
         else:
             raise ValueError(f"Unknown arch={arch}")

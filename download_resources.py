@@ -46,19 +46,25 @@ download_zip("dirs")
 os.makedirs(os.path.join(target_folder, "pretrained_models"), exist_ok=True)
 
 # external pre-trained checkpoint
-download_file("atst_as.ckpt", subfolder="pretrained_models")
-
-# AudioSet strong pre-trained checkpoint
-download_file("atst_as_strong.ckpt", subfolder="pretrained_models")
-
-# Stage 1 pre-trained checkpoint
-download_file("atst_stage1.ckpt", subfolder="pretrained_models")
-
-# external pre-trained checkpoint
 download_file("beats_as.pt", subfolder="pretrained_models")
 
-# AudioSet strong pre-trained checkpoint
+# external pre-trained checkpoint
+download_file("atst_as.ckpt", subfolder="pretrained_models")
+
+# AudioSet strong pre-trained checkpoints
+download_file("atst_as_strong.ckpt", subfolder="pretrained_models")
 download_file("passt_as_strong.ckpt", subfolder="pretrained_models")
+
+# Stage 1 pre-trained checkpoints
+download_file("atst_stage1.ckpt", subfolder="pretrained_models")
+download_file("passt_stage1.ckpt", subfolder="pretrained_models")
+download_file("beats_stage1.ckpt", subfolder="pretrained_models")
+
+# Stage 2 pre-trained checkpoints
+download_file("atst_stage2.ckpt", subfolder="pretrained_models")
+download_file("passt_stage2.ckpt", subfolder="pretrained_models")
+download_file("beats_stage2.ckpt", subfolder="pretrained_models")
+
 
 os.makedirs(os.path.join(target_folder, "exclude"), exist_ok=True)
 
