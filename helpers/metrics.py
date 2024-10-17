@@ -9,6 +9,30 @@ import psds_eval
 import sed_eval
 from psds_eval import PSDSEval, plot_psd_roc
 import sed_scores_eval
+import scipy
+from concurrent.futures import ThreadPoolExecutor
+
+
+def batched_decode_predictions_parallel(strong_predictions, filenames, encoder, median_filter=7, n_jobs=4):
+    strong_predictions = strong_predictions.detach().cpu().permute(0,2,1).numpy()
+    labels = encoder.labels
+    timestamps = encoder._frame_to_time(np.arange(len(strong_predictions[0]) + 1))
+
+    def strong_predictions_to_df(strong_prediction):
+        strong_prediction = scipy.ndimage.filters.median_filter(strong_prediction, (median_filter, 1))
+        scores_df = create_score_dataframe(
+            scores=strong_prediction,
+            timestamps=timestamps,
+            event_classes=labels
+        )
+
+        return scores_df
+
+    with ThreadPoolExecutor(max_workers=n_jobs) as executor:
+       dfs = executor.map(strong_predictions_to_df, strong_predictions)
+
+    return {Path(f).stem: df for f, df in zip(filenames, dfs)}
+
 
 
 def batched_decode_preds(

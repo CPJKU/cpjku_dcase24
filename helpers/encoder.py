@@ -3,7 +3,7 @@ import pandas as pd
 from dcase_util.data import DecisionEncoder
 from collections import OrderedDict
 
-from datasets.classes_dict import classes_labels_desed, classes_labels_maestro_real
+from data_util.classes_dict import classes_labels_desed, classes_labels_maestro_real
 
 
 class ManyHotEncoder:

@@ -7,13 +7,12 @@ import lightning as L
 import numpy as np
 import transformers
 import wandb
-import random
-from config_updates import add_configs
+
+from configs import add_configs, PRETRAINED_MODELS
 from helpers.utils import config_call
 from helpers.workersinit import worker_init_fn
 from sacred import Experiment
 from pathlib import Path
-from sacred.config_helpers import CMD
 from torch.utils.data import DataLoader
 from lightning.pytorch.loggers import WandbLogger
 import datasets
@@ -22,12 +21,11 @@ import pickle
 import torch.nn as nn
 from torch import autocast
 
-from datasets import audioset
-from datasets import audioset_strong
+from data_util import audioset
+from data_util import audioset_strong
 
 from models.fpasst import fpasst as passt
 from models import preprocess
-from helpers.mixup import my_mixup
 from sklearn import metrics
 from models.wrapper import AudiosetWrapper, Task4RNNWrapper
 
@@ -36,13 +34,10 @@ from lightning.pytorch.callbacks import ModelCheckpoint
 import sed_scores_eval
 
 from helpers.augment import mixup, frame_shift, gain_augment, time_mask, feature_transformation, mixstyle
-from helpers.metrics import batched_decode_preds, compute_psds_from_scores, batched_decode_predictions_parallel
+from helpers.metrics import batched_decode_predictions_parallel
 
 from models.atst.atst_model_wrapper import ATSTWrapper, ATSTMel
-from models.beats.BEATs_wrapper import BEATsWrapper, remove_weight_norm, apply_weight_norm
-from models.wrapper import pretrained_path
-
-from copy import deepcopy
+from models.beats.BEATs_wrapper import BEATsWrapper
 
 if 'LD_LIBRARY_PATH' in os.environ:
     del os.environ['LD_LIBRARY_PATH']
@@ -50,9 +45,7 @@ if 'LD_LIBRARY_PATH' in os.environ:
 import socket
 
 hostname = socket.gethostname()
-
-MODEL_PATHS = '' # TODO: set this
-os.environ["HF_DATASETS_CACHE"] = '' # TODO: set this
+# os.environ["HF_DATASETS_CACHE"] = '' # TODO: set this
 
 DEBUG = False
 
@@ -133,7 +126,7 @@ get_strong_validate_loader = ex.command(
 )
 
 # label encoder
-from helpers.t4_encoder import get_encoder
+from helpers.encoder import get_encoder
 many_hot_encoder = ex.command(get_encoder, prefix="encoder")
 
 Trainer = ex.command(L.Trainer, prefix="trainer")
@@ -141,8 +134,6 @@ Trainer = ex.command(L.Trainer, prefix="trainer")
 mel = ex.command(preprocess.AugmentMelSTFT, prefix="passt_mel")
 passt_net = ex.command(passt.get_model, prefix="passt")
 atst_mel = ex.command(ATSTMel, prefix="atst_mel")
-jbt_net = ex.command(beat_tracker.BeatTransformer, prefix="jbt")
-frame_dymn_net = ex.command(get_frame_dymn, prefix="frame_dymn")
 
 weak_wrapper = ex.command(AudiosetWrapper, prefix="weak_wrapper")
 strong_wrapper = ex.command(Task4RNNWrapper, prefix="strong_wrapper")
@@ -196,6 +187,14 @@ def default_conf():
         precision="16-mixed",
         reload_dataloaders_every_epoch=True,
         default_root_dir="./outputs",
+    )
+
+    atst_frame = dict(
+        pretrained_name="atst_as"
+    )
+
+    beats = dict(
+        pretrained_name="beats_as"
     )
 
     sample_rate = 16_000
@@ -282,8 +281,8 @@ def default_conf():
     weak_distillation_loss_weight = 0.1
     strong_supervised_loss_weight = 0.0
 
-    atst_checkpoint = "atstframe_base_as2M.ckpt"
-    beats_checkpoint = "BEATS_iter3_plus_AS2M.pt"
+    atst_checkpoint = "atst_as.ckpt"
+    beats_checkpoint = "beats_as.pt"
 
     skip_checkpoint = False
 
@@ -369,6 +368,16 @@ def get_optimizer(
     return torch.optim.Adam(param_groups, lr=lr, betas=betas)
 
 
+def my_mixup(size, alpha):
+    rn_indices = torch.randperm(size)
+    lambd = np.random.beta(alpha, alpha, size).astype(np.float32)
+    lambd = np.concatenate([lambd[:, None], 1 - lambd[:, None]], 1).max(1)
+    lam = torch.FloatTensor(lambd)
+    # data = data * lam + data2 * (1 - lam)
+    # targets = targets * lam + targets2 * (1 - lam)
+    return rn_indices, lam
+
+
 class BL23Module(L.LightningModule):
     def __init__(
             self,
@@ -449,22 +458,14 @@ class BL23Module(L.LightningModule):
             embed_dim = net.num_features
         elif arch == "beats":
             net = BEATsWrapper(
-                cfg_path=os.path.join(pretrained_path, self.config['beats_checkpoint']),
+                cfg_path=os.path.join(PRETRAINED_MODELS, self.config['beats_checkpoint']),
                 output_tokens_per_timestep=self.config['output_tokens_per_timestep']
             )
             self.mel = net.preprocess
             embed_dim = 768*(8//self.config['output_tokens_per_timestep'])
-        elif arch == "jbt":
-            self.mel = None
-            net = scall(jbt_net)
-            embed_dim = net.hidden_dim
-        elif arch == "frame_dymn":
-            self.mel = scall(mel)
-            net = scall(frame_dymn_net)
-            embed_dim = net.lastconv_output_channels
         elif arch == "atst_frame":
             self.mel = scall(atst_mel)
-            net = ATSTWrapper(os.path.join(MODEL_PATHS, self.config['atst_checkpoint']))
+            net = ATSTWrapper(os.path.join(PRETRAINED_MODELS, self.config['atst_checkpoint']))
             embed_dim = 768
         else:
             raise ValueError(f"Unknown arch={arch}")
@@ -475,14 +476,14 @@ class BL23Module(L.LightningModule):
             net,
             embed_dim=embed_dim,
             seq_len=self.config.seq_len,
-            wandb_id=self.config[arch]["wandb_id"]
+            pretrained_name=self.config[arch]["wandb_id"]
         )
 
         self.net_strong = strong_wrapper(
             net,
             seq_len=self.config.seq_len,
             embed_dim=embed_dim,
-            wandb_id=self.config[arch]["wandb_id"]
+            pretrained_name=self.config[arch]["wandb_id"]
         )
 
         self.encoder = scall(many_hot_encoder)

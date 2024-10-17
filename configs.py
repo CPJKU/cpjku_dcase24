@@ -32,7 +32,7 @@ def add_configs(ex):
         )
 
         atst_frame = dict(
-            wandb_id=None
+            pretrained_name=None
         )
 
 

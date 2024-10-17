@@ -18,6 +18,9 @@ The repository currently contains:
 The codebase is still a bit messy (also due to the complex task setup). We will clarify and clean code pieces further based on requests.
 Feel free to open an issue or drop me an email: florian.schmid@jku.at
 
+In case you are specifically interested in AudioSet strong pre-training, please checkout [this](https://github.com/fschmid56/PretrainedSED) repository. We are actively working on this
+repository and will provide a clean version of the AudioSet strong training loop there.
+
 ## Data Setup
 
 ### AudioSet (strong)
@@ -112,8 +115,9 @@ Alternatively, you can just download the files you need and want to work with.
 ATST:
 
 ```
-python -m ex_audioset_strong with atst_frame_arch_16khz audio_set_strong_pretraining strong_supervised_loss_weight=1.0 weak_supervised_loss_weight=0.0 weak_distillation_loss_weight=0.0 training_strong.batch_size=64 training_weak.batch_size=64 validation_weak.batch_size=128 validation_strong.batch_size=128 trainer.max_epochs=10 optimizer.lr_pt=1e-5 optimizer.lr=1e-5 optimizer.num_warmup_steps=5387 optimizer.initial_lr=1e-3 optimizer.initial_lr_pt=1e-5 trainer.check_val_every_n_epoch=1 strong_wrapper.rnn_dim=1024 strong_wrapper.rnn_layers=0 strong_wrapper.skip_audiosetwrapper=True strong_wrapper.rnn_dropout=0.0 skip_checkpoint=False atst_mel.freq_scale=1.0 strong_augment.gain_augment=0.0 strong_augment.filter_augment.apply=False strong_augment.time_augment.apply_mask=False strong_augment.time_augment.apply_shift=False strong_augment.mix_augment.apply_mixup=True strong_augment.mix_augment.mixup_p=0.3 strong_augment.mix_augment.apply_style=False
+python -m ex_audioset_strong with atst_frame_arch_16khz audio_set_strong_pretraining strong_supervised_loss_weight=1.0 weak_supervised_loss_weight=0.0 weak_distillation_loss_weight=0.0 training_strong.batch_size=64 training_weak.batch_size=64 validation_weak.batch_size=128 validation_strong.batch_size=128 trainer.max_epochs=10 optimizer.lr_pt=1e-5 optimizer.lr=1e-5 optimizer.num_warmup_steps=5387 optimizer.initial_lr=1e-3 optimizer.initial_lr_pt=1e-5 trainer.check_val_every_n_epoch=1 strong_wrapper.rnn_dim=1024 strong_wrapper.rnn_layers=2 strong_wrapper.skip_audiosetwrapper=True strong_wrapper.rnn_dropout=0.0 skip_checkpoint=False atst_mel.freq_scale=1.0 strong_augment.gain_augment=0.0 strong_augment.filter_augment.apply=False strong_augment.time_augment.apply_mask=False strong_augment.time_augment.apply_shift=False strong_augment.mix_augment.apply_mixup=True strong_augment.mix_augment.mixup_p=0.3 strong_augment.mix_augment.apply_style=False
 ```
+
 
 ## Example Commands Iteration 2, Stage 1:
 

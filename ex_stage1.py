@@ -33,10 +33,10 @@ from models.wrapper import Task4CRNNEmbeddingsWrapper
 from helpers.encoder import get_encoder
 
 # data & augmentations
-from datasets import t4_24_datasets
+from data_util import t4_24_datasets
 from helpers.workersinit import worker_init_fn
 from helpers.augment import mixup, frame_shift, gain_augment, time_mask, feature_transformation, mixstyle
-from datasets.classes_dict import classes_labels_desed, classes_labels_maestro_real, \
+from data_util.classes_dict import classes_labels_desed, classes_labels_maestro_real, \
     classes_labels_maestro_real_eval
 
 # config & logging

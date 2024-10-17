@@ -12,7 +12,6 @@ from data_util.utils import catchtime
 
 import torch
 from torch.utils.data.sampler import Sampler
-import hffastup
 
 from torch.utils.data import (
     Dataset as TorchDataset,

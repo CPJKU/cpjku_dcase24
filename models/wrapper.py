@@ -83,70 +83,42 @@ class AudiosetWrapper(nn.Module):
         return logits
 
 
-class Task4RNNASStrongWrapper(nn.Module):
+class Task4RNNWrapper(nn.Module):
     def __init__(self, model, audioset_classes=527, seq_len=250, embed_dim=768, rnn_type="BGRU",
-                 rnn_dim=256, rnn_layers=2, rnn_dropout=0.0, n_classes=10, pretrained_name=None,
-                 load_wrapper_parameters=False, exclude_clf_head=False, skip_audiosetwrapper=False,
-                 use_attention_head=True):
-        super(Task4RNNASStrongWrapper, self).__init__()
+                 rnn_dim=256, rnn_layers=2, n_classes=10, pretrained_name=None):
+        super(Task4RNNWrapper, self).__init__()
         self.audioset_classes = audioset_classes
         self.seq_len = seq_len
         self.num_features = embed_dim
         self.n_classes = n_classes
-        self.exclude_clf_head = exclude_clf_head
-        self.load_wrapper_parameters = load_wrapper_parameters
-        self.use_attention_head = use_attention_head
+        self.model = AudiosetWrapper(model, audioset_classes, embed_dim, seq_len, use_attention_head=False,
+                                     pretrained_name=pretrained_name)
 
-        input_dim = embed_dim if skip_audiosetwrapper else audioset_classes
-
-        if skip_audiosetwrapper:
-            self.model = model
-        else:
-            self.model = AudiosetWrapper(model, audioset_classes, embed_dim, seq_len, use_attention_head=False,
-                                     pretrained_name=None if load_wrapper_parameters else pretrained_name)
-        self.pretrained_name = pretrained_name
-
+        print(rnn_layers)
         if rnn_type == "BGRU":
             self.rnn = BidirectionalGRU(
-                n_in=input_dim,
+                n_in=audioset_classes,
                 n_hidden=rnn_dim,
-                dropout=rnn_dropout,
+                dropout=0,
                 num_layers=rnn_layers,
-            ) if rnn_layers > 0 else nn.Identity()
+            )
         else:
             NotImplementedError("Only BGRU supported for now")
 
-        self.sigmoid_dense = nn.Linear(rnn_dim * 2 if rnn_layers > 0 else input_dim, self.n_classes)
-        self.softmax_dense = nn.Linear(rnn_dim * 2 if rnn_layers > 0 else input_dim, self.n_classes)
-
-        if load_wrapper_parameters and pretrained_name:
-            self.load_model()
-
-        if not self.use_attention_head:
-            del self.softmax_dense
-
-    def load_model(self):
-        pretrained_weights = torch.load(os.path.join(PRETRAINED_MODELS, self.pretrained_name + ".ckpt"), map_location="cpu")["state_dict"]
-        pretrained_weights = {".".join(k.split(".")[1:]): v for k, v in pretrained_weights.items() if k.startswith("net_strong.")}
-        if self.exclude_clf_head:
-            pretrained_weights = {k: v for k, v in pretrained_weights.items() if not (k.startswith("sigmoid_dense") or k.startswith("softmax_dense"))}
-        self.load_state_dict(pretrained_weights, strict=not self.exclude_clf_head)
-        print("Loaded model successfully. pretrained_name:", self.pretrained_name)
+        self.sigmoid_dense = nn.Linear(rnn_dim * 2, self.n_classes)
+        self.softmax_dense = nn.Linear(rnn_dim * 2, self.n_classes)
 
     def forward(self, x):
         x = self.model(x)
         x = self.rnn(x)
 
-        if self.use_attention_head:
-            strong = torch.sigmoid(self.sigmoid_dense(x))
-            sof = torch.softmax(self.softmax_dense(x), dim=-1)
-            sof = torch.clamp(sof, min=1e-7, max=1)
+        strong = torch.sigmoid(self.sigmoid_dense(x))
+        sof = torch.softmax(self.softmax_dense(x), dim=-1)
+        sof = torch.clamp(sof, min=1e-7, max=1)
 
-            weak = (strong * sof).sum(1) / sof.sum(1)
+        weak = (strong * sof).sum(1) / sof.sum(1)
 
-            return strong.transpose(1, 2), weak
-        else:
-            return self.sigmoid_dense(x)
+        return strong.transpose(1, 2), weak
 
 
 class Task4CRNNEmbeddingsWrapper(nn.Module):

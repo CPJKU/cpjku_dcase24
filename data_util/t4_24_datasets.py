@@ -13,8 +13,8 @@ from pathlib import Path
 import pathlib
 from copy import deepcopy
 
-from datasets.samplers import ConcatDatasetBatchSampler
-from datasets.classes_dict import classes_labels_desed, classes_labels_maestro_real, maestro_desed_alias, desed_maestro_alias
+from data_util.samplers import ConcatDatasetBatchSampler
+from data_util.classes_dict import classes_labels_desed, classes_labels_maestro_real, maestro_desed_alias, desed_maestro_alias
 from configs import DIRS_PATH
 
 
